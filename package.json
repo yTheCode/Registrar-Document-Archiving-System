@@ -1,0 +1,84 @@
+{
+  "name": "adzu-registrar-archive",
+  "version": "1.0.0",
+  "description": "AdZU Registrar Office Document Archiving System - Standalone Desktop Application",
+  "main": "electron/main.cjs",
+  "type": "module",
+  "scripts": {
+    "prepare:scanner": "node scripts/prepare-scanner-assets.mjs",
+    "postinstall": "node scripts/prepare-scanner-assets.mjs",
+    "predev": "npm run prepare:scanner",
+    "dev": "concurrently \"npm run dev:react\" \"npm run dev:electron\"",
+    "dev:react": "vite",
+    "dev:electron": "wait-on http://localhost:5173 && electron .",
+    "rebuild": "electron-rebuild -f -w better-sqlite3",
+    "prebuild": "npm run prepare:scanner",
+    "build": "tsc && vite build",
+    "build:win": "npm run build && electron-builder --win",
+    "build:mac": "npm run build && electron-builder --mac",
+    "build:linux": "npm run build && electron-builder --linux",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "registrar",
+    "archive",
+    "document-management",
+    "electron",
+    "desktop-app"
+  ],
+  "author": "AdZU Registrar Office",
+  "license": "MIT",
+  "build": {
+    "appId": "com.adzu.registrar.archive",
+    "productName": "AdZU Registrar Archive",
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "src/assets/adzu-seal.png"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "node_modules/**/*",
+      "!node_modules/jscanify/**",
+      "!node_modules/canvas/**",
+      "!node_modules/jsdom/**",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    }
+  },
+  "dependencies": {
+    "@fontsource/dm-sans": "^5.3.0",
+    "@fontsource/space-mono": "^5.3.0",
+    "adm-zip": "^0.6.0",
+    "archiver": "^7.0.1",
+    "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^9.2.2",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.44.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.21.0",
+    "tailwind-merge": "^2.5.4"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^3.7.2",
+    "@tailwindcss/vite": "^4.0.0-beta.1",
+    "@types/node": "^22.0.0",
+    "@types/react": "^18.2.47",
+    "@types/react-dom": "^18.2.18",
+    "@vitejs/plugin-react": "^4.2.1",
+    "concurrently": "^8.2.2",
+    "electron": "^28.1.0",
+    "electron-builder": "^24.9.1",
+    "jscanify": "1.4.3",
+    "tailwindcss": "^4.0.0-beta.1",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.11",
+    "wait-on": "^7.2.0"
+  }
+}

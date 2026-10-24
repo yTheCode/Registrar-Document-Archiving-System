@@ -1,0 +1,6 @@
+export const PAGINATION = {
+  STUDENT_PAGE_SIZE: 10,
+  REVIEW_PAGE_SIZE: 5,
+  USER_PAGE_SIZE: 10,
+  SEARCH_PAGE_SIZE: 10
+} as const

@@ -1,0 +1,345 @@
+/* Image Editor Overlay */
+.image-editor-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  backdrop-filter: blur(4px);
+}
+
+.image-editor-modal {
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
+  max-width: 95vw;
+  max-height: 95vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.image-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid #e5e7eb;
+  background: #f9fafb;
+}
+
+.image-editor-header h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: #111827;
+}
+
+.close-btn {
+  background: none;
+  border: none;
+  font-size: 2rem;
+  line-height: 1;
+  color: #6b7280;
+  cursor: pointer;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.close-btn:hover {
+  background-color: #f3f4f6;
+  color: #111827;
+}
+
+.image-editor-content {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.canvas-container {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  background: #f3f4f6;
+  overflow: auto; /* Allow scrolling when zoomed */
+  position: relative;
+}
+
+/* Positions the crop overlay against the canvas's own pixel grid */
+.canvas-stage {
+  position: relative;
+  display: inline-block;
+  flex: none;
+}
+
+.edit-canvas {
+  display: block;
+  border-radius: 8px;
+  background: white;
+  /* A border would offset the canvas pixel grid from the crop overlay */
+  box-shadow: 0 0 0 2px #d1d5db, 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.edit-canvas.crop-active {
+  cursor: crosshair;
+}
+
+.crop-overlay {
+  position: absolute;
+  border: 2px solid #3b82f6;
+  background: rgba(59, 130, 246, 0.1);
+  pointer-events: none;
+  z-index: 10;
+}
+
+.crop-border {
+  position: absolute;
+  top: -2px;
+  left: -2px;
+  right: -2px;
+  bottom: -2px;
+  border: 2px dashed #ffffff;
+  border-radius: 2px;
+}
+
+.crop-info {
+  position: absolute;
+  top: -28px;
+  left: 0;
+  background: #3b82f6;
+  color: white;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
+/* Document corner overlay: only the handles take pointer input */
+.quad-overlay {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  z-index: 11;
+}
+
+.quad-shape {
+  fill: rgba(47, 107, 58, 0.12);
+  stroke: #2f6b3a;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.quad-shape.quad-suggested {
+  fill: rgba(59, 130, 246, 0.10);
+  stroke: #3b82f6;
+  stroke-dasharray: 6 4;
+}
+
+.quad-handle {
+  fill: #ffffff;
+  stroke: #2f6b3a;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+  pointer-events: auto;
+  cursor: grab;
+}
+
+.quad-handle.quad-suggested {
+  stroke: #3b82f6;
+}
+
+.editor-controls {
+  width: 320px;
+  background: white;
+  border-left: 1px solid #e5e7eb;
+  padding: 1.5rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.control-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.control-group label {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #374151;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+}
+
+.button-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.control-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.625rem 1rem;
+  border: 1px solid #d1d5db;
+  background: white;
+  color: #374151;
+  border-radius: 6px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.control-btn:hover:not(:disabled) {
+  background: #f9fafb;
+  border-color: #9ca3af;
+}
+
+.control-btn:active:not(:disabled) {
+  background: #f3f4f6;
+}
+
+.control-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.control-btn svg {
+  flex-shrink: 0;
+}
+
+.control-btn.success-btn {
+  background: #10b981;
+  color: white;
+  border-color: #10b981;
+}
+
+.control-btn.success-btn:hover:not(:disabled) {
+  background: #059669;
+  border-color: #059669;
+}
+
+.control-btn.crop-btn {
+  background: #3b82f6;
+  color: white;
+  border-color: #3b82f6;
+}
+
+.control-btn.crop-btn:hover:not(:disabled) {
+  background: #2563eb;
+  border-color: #2563eb;
+}
+
+.control-btn.reset-btn {
+  background: #ef4444;
+  color: white;
+  border-color: #ef4444;
+}
+
+.control-btn.reset-btn:hover:not(:disabled) {
+  background: #dc2626;
+  border-color: #dc2626;
+}
+
+.control-value {
+  font-size: 0.875rem;
+  color: #6b7280;
+  font-weight: 500;
+  text-align: center;
+  padding: 0.25rem;
+}
+
+.image-editor-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  padding: 1rem 1.5rem;
+  border-top: 1px solid #e5e7eb;
+  background: #f9fafb;
+}
+
+.secondary-button {
+  padding: 0.625rem 1.25rem;
+  border: 1px solid #d1d5db;
+  background: white;
+  color: #374151;
+  border-radius: 6px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.secondary-button:hover {
+  background: #f9fafb;
+  border-color: #9ca3af;
+}
+
+.primary-button {
+  padding: 0.625rem 1.25rem;
+  border: 1px solid #2563eb;
+  background: #3b82f6;
+  color: white;
+  border-radius: 6px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.primary-button:hover {
+  background: #2563eb;
+  border-color: #1d4ed8;
+}
+
+.primary-button:active {
+  background: #1e40af;
+}
+
+/* Responsive adjustments */
+@media (max-width: 1024px) {
+  .editor-controls {
+    width: 280px;
+  }
+}
+
+@media (max-width: 768px) {
+  .image-editor-content {
+    flex-direction: column;
+  }
+
+  .editor-controls {
+    width: 100%;
+    max-height: 40vh;
+    border-left: none;
+    border-top: 1px solid #e5e7eb;
+  }
+
+  .canvas-container {
+    padding: 1rem;
+  }
+}

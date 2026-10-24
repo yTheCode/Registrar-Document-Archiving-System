@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+release/
+*.tsbuildinfo
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+database/*.db
+database/*.db-shm
+database/*.db-wal
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+
+# Archive directory (user data)
+Archive/
+archives/
+
+# Temporary files
+temp/
+tmp/
+
+# Generated locally from the jscanify devDependency (npm run prepare:scanner)
+public/scanner/
