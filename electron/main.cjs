@@ -4,21 +4,12 @@ const fs = require('fs');
 const Database = require('better-sqlite3');
 const bcrypt = require('bcryptjs');
 
-let mainWindow;
-let db;
+// paths.cjs must be required first: its import-time side effects (database
+// folder creation, legacy database copy) previously ran here at module load.
+const { userDataPath, dbDir, dbPath, ELECTRON_DIR, PROJECT_ROOT, PRELOAD_PATH } = require('./paths.cjs');
+const { getMainWindow, setMainWindow } = require('./window.cjs');
 
-// Database lives in the OS app-data folder so it survives reinstalls.
-const userDataPath = app.getPath('userData');
-const dbDir = path.join(userDataPath, 'database');
-if (!fs.existsSync(dbDir)) {
-  fs.mkdirSync(dbDir, { recursive: true });
-}
-const dbPath = path.join(dbDir, 'registrar_archive.db');
-const legacyDbPath = path.join(__dirname, '..', 'database', 'registrar_archive.db');
-if (!fs.existsSync(dbPath) && fs.existsSync(legacyDbPath)) {
-  fs.copyFileSync(legacyDbPath, dbPath);
-  console.log('Migrated database from the legacy project folder to userData');
-}
+let db;
 
 // Run migrations to ensure database schema is up to date
 function runMigrations() {
@@ -403,7 +394,7 @@ function initializeDatabase() {
 }
 
 function createWindow() {
-  mainWindow = new BrowserWindow({
+  const mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
     minWidth: 1024,
@@ -416,6 +407,7 @@ function createWindow() {
     autoHideMenuBar: true,
     icon: path.join(__dirname, '../src/assets/adzu-seal.png')
   });
+  setMainWindow(mainWindow);
 
   // Load app
   if (process.env.NODE_ENV === 'development' || !app.isPackaged) {
@@ -1371,7 +1363,7 @@ ipcMain.handle('file:readAsBase64', async (event, filePath) => {
 const sessionPickedFiles = new Set();
 
 function isForbiddenPickedPath(resolved) {
-  const forbidden = [dbDir, dbPath, path.resolve(__dirname)];
+  const forbidden = [dbDir, dbPath, ELECTRON_DIR];
   if (process.platform === 'win32') {
     forbidden.push(path.resolve(process.env.SystemRoot || 'C:\\Windows'));
   } else {
@@ -1473,7 +1465,7 @@ ipcMain.handle('file:print', async (event, { filePath, userId }) => {
         sandbox: true,
         nodeIntegration: false,
         contextIsolation: true,
-        preload: path.join(__dirname, 'preload.js')
+        preload: PRELOAD_PATH
       }
     });
 
@@ -1709,7 +1701,7 @@ ipcMain.handle('settings:set', async (event, { key, value, userId }) => {
 
 // File dialogs
 ipcMain.handle('dialog:openFile', async (event, options) => {
-  const result = await dialog.showOpenDialog(mainWindow, options);
+  const result = await dialog.showOpenDialog(getMainWindow(), options);
   if (!result.canceled && Array.isArray(result.filePaths)) {
     for (const picked of result.filePaths) {
       sessionPickedFiles.add(path.resolve(picked));
@@ -1719,7 +1711,7 @@ ipcMain.handle('dialog:openFile', async (event, options) => {
 });
 
 ipcMain.handle('dialog:openDirectory', async () => {
-  const result = await dialog.showOpenDialog(mainWindow, {
+  const result = await dialog.showOpenDialog(getMainWindow(), {
     properties: ['openDirectory', 'createDirectory']
   });
   return result;
@@ -2533,7 +2525,7 @@ function isSafeArchiveTarget(dir) {
     app.getPath('documents'),
     app.getPath('userData'),
     dbDir,
-    path.resolve(__dirname, '..')
+    PROJECT_ROOT
   ];
   return !forbidden.some((p) => path.resolve(p) === resolved);
 }
