@@ -570,3 +570,33 @@ No merge is possible without a `size`/`autoFocus`/`maxResults`/`label` prop set;
 that is a behavior-neutral cleanup for a dedicated commit.
 
 *(Phase 3a complete: no source edits. Awaiting owner approval before 3b-1.)*
+
+## 10. Phase 3b execution log
+
+### 3b-0 — page moved, shim recreated (approved 3a)
+
+`git mv src/pages/ImportScanner.tsx` →
+`src/features/import-scanner/components/ImportScannerPage.tsx`, byte-for-byte
+(staged blob `3812953…` == HEAD blob of the old path). `src/pages/ImportScanner.tsx`
+is now the one-line re-export
+`export { default } from '@/features/import-scanner/components/ImportScannerPage'`.
+The internal function is still named `ImportScanner` (no rename) and src/App.tsx is
+untouched. No import paths needed fixing — the page already imports everything
+through the `@/` alias.
+
+**Finding — build artifacts are not a clean neutrality signal while this file
+exists.** Tailwind v4 (`@import 'tailwindcss'`, no `@source` narrowing) auto-detects
+every git-tracked file, **including REFACTOR_NOTES.md**, so the class-name literals
+in §9's dedupe table generate real utility rules: the CSS grew 47.18 kB → 47.46 kB
+and the JS hash changed even though no source changed. Verified by building with
+this file moved aside: the output is then byte-identical to the Phase-0 baseline
+(`index-Dqg5fwYU.css`, `index-XYgmIFkO.js`) *with* the page already moved.
+Consequences for every later checkpoint:
+- Compare typecheck/build **PASS/FAIL**, not hashes; or rebuild with the notes
+  moved aside when a hash delta needs explaining.
+- The extra CSS is unused rules only — no visual change. Logged as a Phase 6-lite
+  candidate (add `@source` narrowing or ignore `*.md`); NOT fixed here (rule 1).
+
+Working-tree note: `core.autocrlf=true`, so checked-out sources are CRLF (verified
+against `src/pages/Settings.tsx`); git normalizes them to LF in the index. Nothing
+was mass-reformatted.
