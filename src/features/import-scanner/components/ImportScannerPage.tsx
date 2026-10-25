@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
-import { Camera, FileText, AlertCircle } from 'lucide-react'
+import { Camera, AlertCircle } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import { formatStudentYear } from '@/utils/format'
 import ConfirmDialog from '@/components/ConfirmDialog'
@@ -30,6 +30,8 @@ import { drawLiveOutline } from '@/features/import-scanner/lib/liveOutline'
 import AccessRestricted from '@/features/import-scanner/components/AccessRestricted'
 import AddStudentModal from '@/features/import-scanner/components/AddStudentModal'
 import BatchResultsList from '@/features/import-scanner/components/BatchResultsList'
+import DocumentDetailsForm from '@/features/import-scanner/components/DocumentDetailsForm'
+import DocumentNavCard from '@/features/import-scanner/components/DocumentNavCard'
 import DocumentStudentField from '@/features/import-scanner/components/DocumentStudentField'
 import ImageEditorModal from '@/features/import-scanner/components/ImageEditorModal'
 import ImportActionBar from '@/features/import-scanner/components/ImportActionBar'
@@ -1459,64 +1461,17 @@ function ImportScanner({ user }: PageProps) {
           />
 
           {/* Per-file tagging */}
-          <div className="surface-card rounded-lg p-5 mb-5">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-bold text-[#1c2f47]">
-                Document {currentFileIndex + 1} of {filesWithMetadata.length}
-              </h3>
-              <div className="text-xs text-[#718096]">
-                {readyCount} / {filesWithMetadata.length} ready
-              </div>
-            </div>
-
-            {/* Current file display */}
-            <div className="mb-3 flex items-center gap-3 rounded-md border border-[#e1e5ea] bg-[#f8fafc] p-3">
-              {currentFile.thumbnail || currentFile.isDataUrl ? (
-                <img src={currentFile.editedDataUrl || currentFile.filePath} alt="" className="h-10 w-10 rounded object-cover" />
-              ) : (
-                <FileText size={16} className="text-[#536d89]" />
-              )}
-              <span className="flex-1 text-xs font-bold text-[#263950]">{currentFile.file.name}</span>
-              {isScanWorkflow && (
-                <button
-                  type="button"
-                  onClick={() => handleRetakeCapture(currentFileIndex)}
-                  className="text-xs font-bold text-[#536d89] hover:text-[#1d4778] transition"
-                >
-                  Retake
-                </button>
-              )}
-              {isEditableImage(currentFile) && (
-                  <button
-                    type="button"
-                    onClick={() => handleEditCapture(currentFileIndex)}
-                    className="text-xs font-bold text-[#24558d] hover:text-[#1d4778] transition"
-                  >
-                    Edit Image
-                  </button>
-              )}
-            </div>
-
-            {/* Navigation buttons */}
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={handlePreviousFile}
-                disabled={currentFileIndex === 0}
-                className="flex-1 inline-flex items-center justify-center gap-2 rounded-md px-3 py-2 text-xs font-bold transition focus-ring border border-[#d7dde5] bg-white text-[#34445a] hover:bg-[#f4f6f8] disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                ← Previous
-              </button>
-              <button
-                type="button"
-                onClick={handleNextFile}
-                disabled={currentFileIndex === filesWithMetadata.length - 1}
-                className="flex-1 inline-flex items-center justify-center gap-2 rounded-md px-3 py-2 text-xs font-bold transition focus-ring border border-[#d7dde5] bg-white text-[#34445a] hover:bg-[#f4f6f8] disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                Next →
-              </button>
-            </div>
-          </div>
+          <DocumentNavCard
+            filesWithMetadata={filesWithMetadata}
+            currentFile={currentFile}
+            currentFileIndex={currentFileIndex}
+            isScanWorkflow={isScanWorkflow}
+            readyCount={readyCount}
+            onRetakeCapture={handleRetakeCapture}
+            onEditCapture={handleEditCapture}
+            onPreviousFile={handlePreviousFile}
+            onNextFile={handleNextFile}
+          />
 
           <div className="surface-card rounded-lg p-5 space-y-4">
             <h3 className="text-sm font-bold text-[#1c2f47]">Document Details</h3>
@@ -1536,49 +1491,15 @@ function ImportScanner({ user }: PageProps) {
               />
             )}
 
-            {/* Document Type */}
-            <div>
-              <label className="label-caps mb-1.5 block">
-                Document Type <span className="text-[#b94843]">*</span>
-              </label>
-              <select
-                value={currentDocType}
-                onChange={(e) => setCurrentDocType(e.target.value)}
-                required
-                className="h-10 w-full rounded-md border border-[#d9dfe7] bg-white px-3 text-sm text-[#47576b] outline-none focus:border-[#5688bd] focus:ring-2 focus:ring-[#dceafb]"
-              >
-                <option value="">Select document type...</option>
-                {documentTypes.map(type => (
-                  <option key={type.id} value={type.id}>{type.name}</option>
-                ))}
-              </select>
-            </div>
-
-            {/* End of metadata fields */}
-
-            {/* Academic Year */}
-            <div>
-              <label className="label-caps mb-1.5 block">Academic Year</label>
-              <input
-                type="text"
-                value={currentAcademicYear}
-                onChange={(e) => setCurrentAcademicYear(e.target.value)}
-                placeholder="e.g., 2024-2025"
-                className="h-10 w-full rounded-md border border-[#d9dfe7] bg-white px-3 text-sm text-[#1f2e43] placeholder:text-[#a4adba] outline-none transition focus:border-[#5688bd] focus:ring-2 focus:ring-[#dceafb]"
-              />
-            </div>
-
-            {/* Remarks */}
-            <div>
-              <label className="label-caps mb-1.5 block">Remarks</label>
-              <textarea
-                value={currentRemarks}
-                onChange={(e) => setCurrentRemarks(e.target.value)}
-                placeholder="Optional notes..."
-                rows={3}
-                className="w-full rounded-md border border-[#d9dfe7] bg-white px-3 py-2 text-sm text-[#1f2e43] placeholder:text-[#a4adba] outline-none focus:border-[#5688bd] focus:ring-2 focus:ring-[#dceafb]"
-              />
-            </div>
+            <DocumentDetailsForm
+              currentDocType={currentDocType}
+              setCurrentDocType={setCurrentDocType}
+              documentTypes={documentTypes}
+              currentAcademicYear={currentAcademicYear}
+              setCurrentAcademicYear={setCurrentAcademicYear}
+              currentRemarks={currentRemarks}
+              setCurrentRemarks={setCurrentRemarks}
+            />
 
             {/* Batch Results */}
             {batchResults.length > 0 && <BatchResultsList batchResults={batchResults} />}

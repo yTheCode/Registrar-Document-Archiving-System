@@ -741,6 +741,34 @@ so no class delta; JS 408.90 → 410.16 kB (+1.26 kB = three module wrappers plu
 Still in the page: the camera section (3b-5) and DocumentNavCard + DocumentDetailsForm
 (3b-4).
 
+### 3b-4 — document navigation card + metadata fields (approved 3a)
+
+Created `DocumentNavCard.tsx` (80 lines) — the whole 'Per-file tagging' card: the
+`Document n of m` header, the current-file display (thumbnail, name, Retake, Edit Image)
+and the Previous/Next row. Nine props; the four page callbacks inside became
+`onRetakeCapture`/`onEditCapture`/`onPreviousFile`/`onNextFile`, nothing else changed.
+
+Created `DocumentDetailsForm.tsx` (63 lines) — the Document Type select, the
+`{/* End of metadata fields */}` marker, the Academic Year input and the Remarks
+textarea, returned through a fragment so the three sibling blocks moved verbatim. State
+and setters keep their page names (`currentDocType`/`setCurrentDocType`,
+`currentAcademicYear`, `currentRemarks`, `documentTypes`), so that body needed **zero**
+renames. Page: 1,643 → 1,564 lines (166 insertions / 102 deletions). Page import freed:
+`FileText`.
+
+**Deviation from §8.6 (deliberate, needs owner's blessing to keep):** §8.6 scoped
+`DocumentDetailsForm` to the whole 'Document Details' card. Owning the card means owning
+`<div className="surface-card rounded-lg p-5 space-y-4">`, and therefore also the nested
+`DocumentStudentField`, `BatchResultsList` and `ImportActionBar` — roughly 24
+pass-through props whose only purpose is to reach a component that is already its own
+file, one level deeper. The card, its `Document Details` h3 and those three children
+therefore stay in the page as composition, and the extracted fields render at exactly the
+same DOM position ([ImportScannerPage.tsx:1476-1516](../src/features/import-scanner/components/ImportScannerPage.tsx)).
+If the owner wants §8.6's shape instead, it is a mechanical follow-up commit.
+
+Verified: typecheck PASS, build PASS, CSS hash unchanged (`index-BVwFChkt.css`, 47.46 kB),
+JS 410.16 → 410.82 kB (+0.66 kB).
+
 ## After the defense
 
 Follow-ups deliberately deferred until the defense pass is finished.
