@@ -1,11 +1,9 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
-import { Upload, Camera, FileText, User, Users, Search as SearchIcon, X, AlertCircle, CheckCircle2, UserPlus, Crop } from 'lucide-react'
+import { Camera, FileText, User, Search as SearchIcon, X, AlertCircle, UserPlus } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import { formatStudentYear } from '@/utils/format'
-import ImageEditor from '@/components/ImageEditor'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import PageHeader from '@/components/ui/PageHeader'
-import Pagination from '@/components/ui/Pagination'
 import { useToast } from '@/components/ui/Toast'
 import { detectPaperQuad, extractPaperDataUrl, initScanner } from '@/utils/jscanifyScanner'
 import { applyCameraQuality, cameraQualityKey, formatResolution, listCameraQualities, readTrackResolution } from '@/utils/cameraCapabilities'
@@ -23,31 +21,28 @@ import type {
   BatchResult,
   Workflow
 } from '@/types'
-import { WORKFLOW_LABELS } from '@/features/import-scanner/lib/workflowLabels'
 import { validateDocument, isFileReady } from '@/features/import-scanner/lib/documentValidation'
 import { isEditableImage } from '@/features/import-scanner/lib/editableImages'
 import { getReviewWindow } from '@/features/import-scanner/lib/queueHelpers'
 import { filterStudents, studentIdFromSearchTerm } from '@/features/import-scanner/lib/studentSearch'
 import { describeCameraError } from '@/features/import-scanner/lib/cameraErrors'
 import { drawLiveOutline } from '@/features/import-scanner/lib/liveOutline'
+import AccessRestricted from '@/features/import-scanner/components/AccessRestricted'
+import BatchResultsList from '@/features/import-scanner/components/BatchResultsList'
+import ImageEditorModal from '@/features/import-scanner/components/ImageEditorModal'
+import ImportActionBar from '@/features/import-scanner/components/ImportActionBar'
+import ReviewTable from '@/features/import-scanner/components/ReviewTable'
+import SavingOverlay from '@/features/import-scanner/components/SavingOverlay'
+import ScannedQueue from '@/features/import-scanner/components/ScannedQueue'
+import StepFileAcquisition from '@/features/import-scanner/components/StepFileAcquisition'
+import WorkflowBanner from '@/features/import-scanner/components/WorkflowBanner'
+import WorkflowPicker from '@/features/import-scanner/components/WorkflowPicker'
 
 
 function ImportScanner({ user }: PageProps) {
   // Restrict to admin only
   if (user.role !== 'admin') {
-    return (
-      <div className="mx-auto max-w-[1420px] p-5 sm:p-7">
-        <div className="surface-card rounded-lg p-8 text-center">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-[#fff6df] mb-4">
-            <Upload size={28} className="text-[#b17f22]" />
-          </div>
-          <h2 className="text-lg font-bold text-[#182a43] mb-2">Access Restricted</h2>
-          <p className="text-sm text-[#718096]">
-            Document upload and scanning is only available to administrators.
-          </p>
-        </div>
-      </div>
-    )
+    return <AccessRestricted />
   }
 
   const [workflow, setWorkflow] = useState<Workflow | null>(null)
@@ -1290,139 +1285,18 @@ function ImportScanner({ user }: PageProps) {
       )}
 
       {/* Workflow indicator (once a workflow has started) */}
-      {workflow && step !== 'mode' && (
-        <div className="mb-5 flex items-center justify-between rounded-lg border border-[#e1e5ea] bg-[#f8fafc] px-4 py-2.5">
-          <div className="flex items-center gap-2 text-xs text-[#536d89]">
-            <span className="label-caps">Workflow</span>
-            <span className="rounded-full bg-[#24558d] px-2.5 py-0.5 text-[11px] font-bold text-white">
-              {WORKFLOW_LABELS[workflow]}
-            </span>
-            {isStudentWorkflow && batchStudent && step !== 'selectStudent' && (
-              <span className="text-[#263950]">
-                — {batchStudent.first_name} {batchStudent.last_name} ({formatStudentYear(batchStudent)})
-              </span>
-            )}
-          </div>
-          <button
-            type="button"
-            onClick={resetAll}
-            disabled={isProcessing}
-            className="text-xs font-bold text-[#b94843] hover:underline disabled:opacity-50"
-          >
-            Start Over
-          </button>
-        </div>
-      )}
-
-      {/* Selected Student — persistent locked-student summary (student workflows only) */}
-      {isStudentWorkflow && batchStudent && step !== 'selectStudent' && (
-        <div className="mb-5 flex items-center justify-between rounded-lg border border-[#c5dff4] bg-[#eef5fb] px-4 py-3">
-          <div className="flex items-center gap-3">
-            <div className="rounded-full bg-white p-2 text-[#24558d]">
-              <User size={18} />
-            </div>
-            <div>
-              <div className="label-caps text-[#536d89]">Selected Student</div>
-              <div className="text-sm font-bold text-[#182a43]">
-                {batchStudent.last_name}, {batchStudent.first_name}
-                <span className="mono ml-2 text-xs font-normal text-[#536d89]">{formatStudentYear(batchStudent)}</span>
-              </div>
-              <div className="mt-0.5 text-xs text-[#536d89]">
-                All documents added in this session will be archived under this student.
-              </div>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={handleChangeStudent}
-            disabled={isProcessing}
-            className="inline-flex items-center justify-center rounded-md px-3.5 py-2 text-xs font-bold transition focus-ring border border-[#a9c9e6] bg-white text-[#24558d] hover:bg-[#dceafb] disabled:opacity-50"
-          >
-            Change Student
-          </button>
-        </div>
-      )}
+      <WorkflowBanner
+        workflow={workflow}
+        step={step}
+        isStudentWorkflow={isStudentWorkflow}
+        batchStudent={batchStudent}
+        isProcessing={isProcessing}
+        onResetAll={resetAll}
+        onChangeStudent={handleChangeStudent}
+      />
 
       {/* STEP: Entry — four workflows */}
-      {step === 'mode' && (
-        <>
-          <div className="surface-card rounded-lg p-5 mb-5">
-            <div className="label-caps mb-3">Single Student Import</div>
-            <p className="mb-4 text-xs text-[#718096]">
-              For one known student — select the student first, then add all their documents.
-            </p>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <button
-                onClick={() => handleStartWorkflow('single-student-upload')}
-                className="flex items-center gap-4 rounded-lg border-2 border-[#e1e5ea] p-4 text-left transition hover:border-[#24558d] hover:bg-[#eef5fb]"
-              >
-                <div className="rounded-full bg-[#edf2f7] p-3 text-[#536d89]">
-                  <Upload size={20} />
-                </div>
-                <div>
-                  <div className="text-sm font-bold text-[#182a43]">Upload for One Student</div>
-                  <p className="mt-0.5 text-xs text-[#718096]">
-                    Select files from your computer
-                  </p>
-                </div>
-              </button>
-
-              <button
-                onClick={() => handleStartWorkflow('single-student-scan')}
-                className="flex items-center gap-4 rounded-lg border-2 border-[#e1e5ea] p-4 text-left transition hover:border-[#24558d] hover:bg-[#eef5fb]"
-              >
-                <div className="rounded-full bg-[#edf2f7] p-3 text-[#536d89]">
-                  <Camera size={20} />
-                </div>
-                <div>
-                  <div className="text-sm font-bold text-[#182a43]">Capture for One Student</div>
-                  <p className="mt-0.5 text-xs text-[#718096]">
-                    Use the webcam to scan documents
-                  </p>
-                </div>
-              </button>
-            </div>
-          </div>
-
-          <div className="surface-card rounded-lg p-5">
-            <div className="label-caps mb-3">Mixed-Batch Import</div>
-            <p className="mb-4 text-xs text-[#718096]">
-              For a mixed stack — upload or scan everything first, then tag each document and assign students afterward when required.
-            </p>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <button
-                onClick={() => handleStartWorkflow('mixed-batch-upload')}
-                className="flex items-center gap-4 rounded-lg border-2 border-[#e1e5ea] p-4 text-left transition hover:border-[#24558d] hover:bg-[#eef5fb]"
-              >
-                <div className="rounded-full bg-[#edf2f7] p-3 text-[#536d89]">
-                  <Users size={20} />
-                </div>
-                <div>
-                  <div className="text-sm font-bold text-[#182a43]">Upload Mixed Batch</div>
-                  <p className="mt-0.5 text-xs text-[#718096]">
-                    Select files from your computer
-                  </p>
-                </div>
-              </button>
-
-              <button
-                onClick={() => handleStartWorkflow('mixed-batch-scan')}
-                className="flex items-center gap-4 rounded-lg border-2 border-[#e1e5ea] p-4 text-left transition hover:border-[#24558d] hover:bg-[#eef5fb]"
-              >
-                <div className="rounded-full bg-[#edf2f7] p-3 text-[#536d89]">
-                  <Camera size={20} />
-                </div>
-                <div>
-                  <div className="text-sm font-bold text-[#182a43]">Capture Mixed Batch</div>
-                  <p className="mt-0.5 text-xs text-[#718096]">
-                    Continuously scan a stack, tag everything afterward
-                  </p>
-                </div>
-              </button>
-            </div>
-          </div>
-        </>
-      )}
+      {step === 'mode' && <WorkflowPicker onStartWorkflow={handleStartWorkflow} />}
 
       {/* STEP: Student selection (Student workflows only) — search disappears once a student is picked */}
       {step === 'selectStudent' && (
@@ -1441,47 +1315,12 @@ function ImportScanner({ user }: PageProps) {
 
       {/* STEP: File acquisition method */}
       {step === 'files' && (
-        <div className="surface-card rounded-lg p-8 text-center">
-          {isScanWorkflow ? (
-            <>
-              <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-[#eef5fb] mb-4">
-                <Camera size={28} className="text-[#24558d]" />
-              </div>
-              <h3 className="text-base font-bold text-[#182a43] mb-2">
-                {workflow === 'mixed-batch-scan' ? 'Mixed-Batch Document Scanner' : 'Single Student Document Scanner'}
-              </h3>
-              <p className="text-sm text-[#718096] mb-5">
-                Scan the entire stack first — capture as many documents as you need, then tag them all at the end.
-              </p>
-              <button
-                onClick={handleStartScan}
-                className="inline-flex items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-bold transition focus-ring bg-[#24558d] text-white hover:bg-[#1d4778]"
-              >
-                <Camera size={16} />
-                Start Camera
-              </button>
-            </>
-          ) : (
-            <>
-              <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-[#eef5fb] mb-4">
-                <Upload size={28} className="text-[#24558d]" />
-              </div>
-              <h3 className="text-base font-bold text-[#182a43] mb-2">
-                Select Files to Upload
-              </h3>
-              <p className="text-sm text-[#718096] mb-5">
-                Choose image or PDF files from your computer
-              </p>
-              <button
-                onClick={handleFileSelect}
-                className="inline-flex items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-bold transition focus-ring bg-[#24558d] text-white hover:bg-[#1d4778]"
-              >
-                <Upload size={16} />
-                Choose Files
-              </button>
-            </>
-          )}
-        </div>
+        <StepFileAcquisition
+          workflow={workflow}
+          isScanWorkflow={isScanWorkflow}
+          onStartScan={handleStartScan}
+          onFileSelect={handleFileSelect}
+        />
       )}
 
       {/* STEP: Camera — continuous capture with queue */}
@@ -1659,31 +1498,12 @@ function ImportScanner({ user }: PageProps) {
 
           {/* Scanned queue */}
           {filesWithMetadata.length > 0 && (
-            <div className="surface-card rounded-lg p-5">
-              <h3 className="text-sm font-bold text-[#1c2f47] mb-1">Scanned Documents</h3>
-              <p className="mb-4 text-xs text-[#718096]">
-                {filesWithMetadata.length} document{filesWithMetadata.length !== 1 ? 's' : ''} scanned — preview, edit, delete, or retake any capture. The camera stays on until you finish scanning.
-              </p>
-              <div className="flex flex-wrap gap-3">
-                {filesWithMetadata.map((f, i) => (
-                  <div key={f.tempId} className="w-32 rounded-md border border-[#e1e5ea] bg-white p-2">
-                    <div className="mb-1.5 flex h-20 items-center justify-center overflow-hidden rounded bg-[#f1f4f7]">
-                      {f.thumbnail || f.isDataUrl ? (
-                        <img src={f.editedDataUrl || f.filePath} alt={f.file.name} className="max-h-20 object-contain" />
-                      ) : (
-                        <FileText size={22} className="text-[#8a97a7]" />
-                      )}
-                    </div>
-                    <div className="mono text-[10px] text-[#536d89]">#{i + 1}</div>
-                    <div className="mt-1 flex flex-wrap gap-1.5 text-[10px] font-bold">
-                      <button onClick={() => handleEditCapture(i)} className="text-[#24558d] hover:underline">Edit</button>
-                      <button onClick={() => handleRetakeCapture(i)} className="text-[#536d89] hover:underline">Retake</button>
-                      <button onClick={() => handleDeleteCapture(i)} className="text-[#b94843] hover:underline">Delete</button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+            <ScannedQueue
+              filesWithMetadata={filesWithMetadata}
+              onEditCapture={handleEditCapture}
+              onRetakeCapture={handleRetakeCapture}
+              onDeleteCapture={handleDeleteCapture}
+            />
           )}
         </div>
       )}
@@ -1692,97 +1512,20 @@ function ImportScanner({ user }: PageProps) {
       {step === 'details' && currentFile && (
         <form onSubmit={handleSubmit}>
           {/* Review table */}
-          <div className="surface-card rounded-lg p-5 mb-5">
-            <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-sm font-bold text-[#1c2f47]">Review {isStudentWorkflow ? 'Single Student' : 'Mixed-Batch'} Documents</h3>
-              <div className="flex items-center gap-3">
-                {/* Re-opens the whole batch from the first image every time it is
-                    clicked, so finishing a pass never locks the button out. */}
-                <button
-                  type="button"
-                  onClick={handleEditAllImages}
-                  disabled={editableImageCount === 0}
-                  className="inline-flex items-center justify-center gap-2 rounded-md px-3 py-1.5 text-xs font-bold transition focus-ring bg-[#24558d] text-white hover:bg-[#1d4778] disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <Crop size={14} />
-                  Edit All Images ({editableImageCount})
-                </button>
-                <div className={cn(
-                  'text-xs font-bold',
-                  readyCount === filesWithMetadata.length ? 'text-[#2b9b72]' : 'text-[#b17f22]'
-                )}>
-                  {readyCount} / {filesWithMetadata.length} ready
-                </div>
-              </div>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead>
-                  <tr className="border-b border-[#e8ebef] text-[10px] uppercase tracking-wide text-[#8a95a5]">
-                    <th className="py-2 pr-3">#</th>
-                    <th className="py-2 pr-3">Preview</th>
-                    <th className="py-2 pr-3">Student</th>
-                    <th className="py-2 pr-3">Document Type</th>
-                    <th className="py-2">Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {reviewSlice.map((f, idx) => {
-                    const i = reviewStart + idx
-                    const dt = documentTypes.find(t => t.id === parseInt(f.documentTypeId))
-                    const needsStudent = !f.student
-                    const errors = validateDocument(f, documentTypes)
-                    const ready = errors.length === 0
-                    return (
-                      <tr
-                        key={f.tempId}
-                        className={cn(
-                          'cursor-pointer border-b border-[#edf0f3] text-xs transition hover:bg-[#f8fafc]',
-                          i === currentFileIndex && 'bg-[#eef5fb]'
-                        )}
-                        onClick={() => handleJumpToFile(i)}
-                      >
-                        <td className="py-2 pr-3 mono text-[#536d89]">{i + 1}</td>
-                        <td className="py-2 pr-3">
-                          {f.thumbnail || f.isDataUrl ? (
-                            <img src={f.editedDataUrl || f.filePath} alt="" className="h-8 w-8 rounded object-cover" />
-                          ) : (
-                            <FileText size={16} className="text-[#8a97a7]" />
-                          )}
-                        </td>
-                        <td className="py-2 pr-3">
-                          {f.student
-                            ? `${f.student.last_name}, ${f.student.first_name}`
-                            : <span className="text-[#b94843]">—</span>}
-                        </td>
-                        <td className="py-2 pr-3">{dt ? dt.name : <span className="text-[#b94843]">—</span>}</td>
-                        <td className="py-2">
-                          {ready ? (
-                            <span className="inline-flex items-center gap-1 text-[#2b9b72]"><CheckCircle2 size={13} /> Ready</span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 font-bold text-[#b94843]"><AlertCircle size={13} /> Needs attention</span>
-                          )}
-                          {needsStudent && <div className="text-[10px] text-[#b94843]">Student required</div>}
-                          {!ready && errors.length > 0 && (
-                            <div className="text-[10px] text-[#b94843]">{errors[0]}</div>
-                          )}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-            {filesWithMetadata.length > PAGINATION.REVIEW_PAGE_SIZE && (
-              <Pagination
-                className="mt-3"
-                page={reviewPage}
-                pageSize={PAGINATION.REVIEW_PAGE_SIZE}
-                total={filesWithMetadata.length}
-                onPageChange={setReviewPage}
-              />
-            )}
-          </div>
+          <ReviewTable
+            filesWithMetadata={filesWithMetadata}
+            reviewSlice={reviewSlice}
+            reviewStart={reviewStart}
+            documentTypes={documentTypes}
+            currentFileIndex={currentFileIndex}
+            isStudentWorkflow={isStudentWorkflow}
+            readyCount={readyCount}
+            editableImageCount={editableImageCount}
+            reviewPage={reviewPage}
+            onJumpToFile={handleJumpToFile}
+            onEditAllImages={handleEditAllImages}
+            onReviewPageChange={setReviewPage}
+          />
 
           {/* Per-file tagging */}
           <div className="surface-card rounded-lg p-5 mb-5">
@@ -1987,82 +1730,28 @@ function ImportScanner({ user }: PageProps) {
             </div>
 
             {/* Batch Results */}
-            {batchResults.length > 0 && (
-              <div className="border-t border-[#e1e5ea] pt-4">
-                <h4 className="text-xs font-bold text-[#1c2f47] mb-2">Import Results:</h4>
-                <div className="space-y-1 max-h-32 overflow-y-auto">
-                  {batchResults.map((result, idx) => (
-                    <div
-                      key={idx}
-                      className={cn(
-                        'text-xs px-2 py-1 rounded',
-                        result.success
-                          ? 'bg-[#e5f5ee] text-[#2b9b72]'
-                          : 'bg-[#fff0ef] text-[#b94843]'
-                      )}
-                    >
-                      {result.success ? '✓' : '✗'} {result.filePath}
-                      {result.error && ` — ${result.error}`}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+            {batchResults.length > 0 && <BatchResultsList batchResults={batchResults} />}
 
             {/* Submit Buttons */}
-            <div className="flex flex-wrap gap-2 pt-4">
-              {currentFileIndex > 0 && (
-                <button
-                  type="button"
-                  onClick={handleCopyFromPrevious}
-                  disabled={isProcessing}
-                  className="inline-flex items-center justify-center gap-2 rounded-md px-3.5 py-2 text-xs font-bold transition focus-ring border border-[#c5dff4] bg-[#eef5fb] text-[#24558d] hover:bg-[#dceafb] disabled:opacity-50"
-                >
-                  Copy Details from Previous
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={resetAll}
-                disabled={isProcessing}
-                className="flex-1 inline-flex items-center justify-center gap-2 rounded-md px-3.5 py-2 text-xs font-bold transition focus-ring border border-[#d7dde5] bg-white text-[#34445a] hover:bg-[#f4f6f8] disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={isProcessing || filesWithMetadata.length === 0 || readyCount < filesWithMetadata.length}
-                title={
-                  filesWithMetadata.length === 0
-                    ? 'Select or scan at least one document before saving.'
-                    : readyCount < filesWithMetadata.length
-                      ? 'Some documents still need attention — see the review table above.'
-                      : undefined
-                }
-                className="flex-1 inline-flex items-center justify-center gap-2 rounded-md px-3.5 py-2 text-xs font-bold transition focus-ring disabled:opacity-50 bg-[#24558d] text-white hover:bg-[#1d4778]"
-              >
-                {isProcessing
-                  ? 'Importing Batch...'
-                  : filesWithMetadata.length === 0
-                    ? 'No documents to save'
-                    : readyCount === filesWithMetadata.length
-                      ? `Save ${filesWithMetadata.length} Document${filesWithMetadata.length !== 1 ? 's' : ''}`
-                      : `${readyCount} of ${filesWithMetadata.length} documents ready`}
-              </button>
-            </div>
+            <ImportActionBar
+              filesWithMetadata={filesWithMetadata}
+              currentFileIndex={currentFileIndex}
+              isProcessing={isProcessing}
+              readyCount={readyCount}
+              onCopyFromPrevious={handleCopyFromPrevious}
+              onResetAll={resetAll}
+            />
           </div>
         </form>
       )}
 
       {/* Image Editor Modal */}
       {showImageEditor && capturedImage && (
-        <div className="fixed inset-0 z-50 bg-black">
-          <ImageEditor
-            imageData={capturedImage}
-            onSave={handleImageEdit}
-            onCancel={handleImageEditCancel}
-          />
-        </div>
+        <ImageEditorModal
+          capturedImage={capturedImage}
+          onSave={handleImageEdit}
+          onCancel={handleImageEditCancel}
+        />
       )}
 
       {/* Add New Student Modal — opened from a student search with no matches */}
@@ -2235,23 +1924,7 @@ function ImportScanner({ user }: PageProps) {
       )}
 
       {/* Loading Overlay for Saving Documents */}
-      {isSaving && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="surface-card rounded-lg p-8 shadow-2xl max-w-md w-full mx-4">
-            <div className="text-center">
-              <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-[#eef5fb] mb-4">
-                <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-[#24558d] border-r-transparent"></div>
-              </div>
-              <h3 className="text-lg font-bold text-[#182a43] mb-2">
-                Saving Documents...
-              </h3>
-              <p className="text-sm text-[#718096]">
-                Please wait while we archive your documents. This may take a few moments.
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
+      {isSaving && <SavingOverlay />}
     </div>
   )
 }

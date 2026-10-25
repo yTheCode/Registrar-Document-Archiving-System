@@ -661,6 +661,48 @@ one-line shim. The Global "behavior must not change" rule is therefore lifted fo
 `handleCapturePhoto` and its two strings ONLY — everything else on this branch is still
 a pure refactor.
 
+### 3b-2 — display components (approved 3a)
+
+Ten presentational components created under `src/features/import-scanner/components/`,
+bodies copied verbatim with a uniform dedent (no rewritten markup, no class change):
+`AccessRestricted` (admin guard), `WorkflowBanner` (indicator + locked-student summary),
+`WorkflowPicker` (four mode buttons), `StepFileAcquisition` ('files' screen),
+`ScannedQueue` (thumbnail cards), `ReviewTable` (table + Pagination),
+`BatchResultsList` (results), `ImportActionBar` (copy/cancel/submit),
+`ImageEditorModal` (wrapper), `SavingOverlay`.
+Page: 2,259 → 1,932 lines (595 insertions / 390 deletions).
+
+Kept exactly as before: **no state or effect moved** (§9), no ref passed as a prop, no
+`React.memo`/`useCallback`/`useMemo` added, element order and conditional rendering
+unchanged. The `step === 'mode'`, `step === 'files'`, `filesWithMetadata.length > 0`,
+`batchResults.length > 0`, `showImageEditor && capturedImage` and `isSaving` guards stay
+written at the page's call sites; only `WorkflowBanner` carries its two guards inside,
+because they are what makes the pair appear and it needs `step` for them
+(`workflow && step !== 'mode'`, `isStudentWorkflow && batchStudent && step !== 'selectStudent'`).
+Page imports dropped after the move: `Upload`, `Users`, `CheckCircle2`, `Crop` (lucide),
+`Pagination`, `ImageEditor`, `WORKFLOW_LABELS` — `noUnusedLocals` proves they are gone.
+`PAGINATION`, `validateDocument`, `FileText`, `User`, `AlertCircle`, `formatStudentYear`
+and `cn` are still used by the sections that remain (camera = 3b-5, per-file tagging and
+details form = 3b-4, student pickers + Add-student modal = 3b-3).
+
+Inside the moved bodies the only edits are handler→prop renames required by §9's
+explicit-props rule: `handleStartWorkflow`→`onStartWorkflow`, `resetAll`→`onResetAll`,
+`handleChangeStudent`→`onChangeStudent`, `handleStartScan`→`onStartScan`,
+`handleFileSelect`→`onFileSelect`, `handleEditCapture`/`handleRetakeCapture`/
+`handleDeleteCapture`→`on*Capture`, `handleJumpToFile`→`onJumpToFile`,
+`handleEditAllImages`→`onEditAllImages`, `setReviewPage`→`onReviewPageChange`,
+`handleCopyFromPrevious`→`onCopyFromPrevious`, `handleImageEdit`/`handleImageEditCancel`→
+`onSave`/`onCancel`. `ReviewTable` receives `reviewSlice` + `reviewStart`, which the page
+still computes through `getReviewWindow` (the pagination state stays in the page).
+
+**Trap caught by typecheck:** `ImportActionBar`'s Cancel button also called the page's
+`resetAll`, which §8.6's block list did not mention — `Cannot find name 'resetAll'` at
+ImportActionBar.tsx:26. It is now an `onResetAll` prop wired to the same `resetAll`.
+
+Verified: typecheck PASS, build PASS, CSS hash unchanged from 3b-1 (`index-BVwFChkt.css`,
+47.46 kB) so no class delta; JS 407.34 → 408.90 kB (+1.56 kB = ten module wrappers plus
+the prop plumbing).
+
 ## After the defense
 
 Follow-ups deliberately deferred until the defense pass is finished.
