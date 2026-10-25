@@ -125,9 +125,41 @@ The Chromium renderer process that runs the React UI is sandboxed. It cannot imp
 registrar-archiving-system/
 │
 ├── electron/
-│   ├── main.cjs          # Main process: window lifecycle, all IPC handlers,
-│   │                     # database init, migrations, file operations
-│   └── preload.js        # Preload bridge: 39 contextBridge-exposed methods
+│   ├── main.cjs          # Startup only: createWindow, database init + archive
+│   │                     # migrations, shutdown hooks, registerAllIpc()
+│   ├── paths.cjs         # userData / database path anchors (require-time side effects)
+│   ├── window.cjs        # getMainWindow / setMainWindow — the single window reference
+│   ├── preload.js        # Preload bridge: 39 contextBridge-exposed methods
+│   ├── db/
+│   │   ├── connection.cjs   # The one better-sqlite3 handle, initializeDatabase(),
+│   │   │                    # closeDatabase(), the doc_academic_year() SQL function
+│   │   └── migrations.cjs   # Idempotent runMigrations() for existing databases
+│   ├── services/
+│   │   ├── authz.cjs             # isAdmin(userId) — re-reads the role from the DB
+│   │   ├── archivePaths.cjs      # getArchiveRoot, validateAndResolvePath,
+│   │   │                         # resolveArchivePath, toArchiveRelative
+│   │   ├── archiveMigrations.cjs # migrateDocumentTypeFolders, migrateToRelativePaths
+│   │   ├── folderNaming.cjs      # PROGRAM_FOLDERS, sanitizers, folder/file names,
+│   │   │                         # pickCollisionFreeFileName
+│   │   ├── backup.cjs            # isSafeArchiveTarget, resolveArchiveDir,
+│   │   │                         # inspectBackupDatabase, removeDatabaseSidecars
+│   │   ├── pickedFiles.cjs       # sessionPickedFiles — the Set of dialog-picked paths
+│   │   └── studentQueries.cjs    # Pure SQL builders for student search/listing
+│   └── ipc/
+│       ├── index.cjs             # registerAllIpc() — requires every domain module
+│       ├── auth.ipc.cjs          # auth:login
+│       ├── users.ipc.cjs         # users:*
+│       ├── students.ipc.cjs      # students:* (incl. recycle bin)
+│       ├── documents.ipc.cjs     # documents:* (search, update, batch, delete, restore, purge)
+│       ├── documentTypes.ipc.cjs # documentTypes:*
+│       ├── files.ipc.cjs         # file:* (copy, open, show, read, print, export)
+│       ├── images.ipc.cjs        # image:saveBase64
+│       ├── folders.ipc.cjs       # folders:generatePath
+│       ├── dialogs.ipc.cjs       # dialog:openFile / openDirectory
+│       ├── settings.ipc.cjs      # settings:get / set
+│       ├── logs.ipc.cjs          # logs:add / getRecent
+│       ├── dashboard.ipc.cjs     # dashboard:getStats
+│       └── archive.ipc.cjs       # archive:changeDirectory / checkIntegrity
 │
 ├── src/                  # Renderer process (React + TypeScript)
 │   ├── App.tsx           # Root component: auth state, session storage, routing
@@ -139,7 +171,7 @@ registrar-archiving-system/
 │   │
 │   ├── components/
 │   │   ├── Layout.tsx             # Sidebar navigation, logout button
-│   │   ├── ImageEditor.tsx        # Crop/rotate modal with jscanify auto-crop
+│   │   ├── ImageEditor.tsx        # Crop/rotate/warp modal, page detection
 │   │   ├── ImageEditor.css        # Editor overlay styles
 │   │   ├── ConfirmDialog.tsx      # Reusable confirmation modal
 │   │   ├── DocumentViewerModal.tsx# Document preview + edit + print modal
@@ -151,15 +183,48 @@ registrar-archiving-system/
 │   │       └── Toast.tsx          # Toast notification system (context + hook)
 │   │
 │   ├── constants/
-│   │   ├── image.ts      # IMAGE_QUALITY = 0.92 (JPEG export quality)
-│   │   └── scanner.ts    # SCANNER_CONFIG: live detect interval, max side px
+│   │   ├── image.ts       # IMAGE_QUALITY = 0.92 (JPEG export quality)
+│   │   ├── pagination.ts  # Review-page size and other list defaults
+│   │   └── scanner.ts     # SCANNER_CONFIG: intervals and analysis max sides
+│   │
+│   ├── features/
+│   │   └── import-scanner/        # The Import / Scan workflow, extracted from the
+│   │                              # former single ImportScanner page component
+│   │       ├── components/
+│   │       │   ├── ImportScannerPage.tsx   # Page state + orchestration
+│   │       │   ├── WorkflowPicker.tsx      # Upload / Scan choice
+│   │       │   ├── WorkflowBanner.tsx      # Current-step guidance banner
+│   │       │   ├── StepFileAcquisition.tsx # Files list + camera scanning step
+│   │       │   ├── AccessRestricted.tsx    # Non-admin placeholder view
+│   │       │   ├── CameraPanel.tsx         # Camera settings, auto-crop toggle
+│   │       │   ├── CameraPreview.tsx       # Video element + detection overlay
+│   │       │   ├── CaptureActions.tsx      # Capture / Finish buttons
+│   │       │   ├── ScannedQueue.tsx        # Captured batch list
+│   │       │   ├── SessionStudentPicker.tsx# Session-wide student selection
+│   │       │   ├── DocumentStudentField.tsx# Per-document student field
+│   │       │   ├── AddStudentModal.tsx     # Create a student inline
+│   │       │   ├── DocumentNavCard.tsx     # Document stepper
+│   │       │   ├── DocumentDetailsForm.tsx # Type / year / remarks metadata form
+│   │       │   ├── ReviewTable.tsx         # Pre-save review grid
+│   │       │   ├── BatchResultsList.tsx    # Per-document save results
+│   │       │   ├── SavingOverlay.tsx       # In-progress save overlay
+│   │       │   ├── ImportActionBar.tsx     # Back / next / save actions
+│   │       │   └── ImageEditorModal.tsx    # Hosts the shared ImageEditor
+│   │       └── lib/
+│   │           ├── cameraErrors.ts      # getUserMedia error → message mapping
+│   │           ├── documentValidation.ts# Required-field validation rules
+│   │           ├── editableImages.ts    # Which queue items can be edited
+│   │           ├── liveOutline.ts       # drawLiveOutline overlay rendering
+│   │           ├── queueHelpers.ts      # Queue insert / replace / remove
+│   │           ├── studentSearch.ts     # Client-side student filtering
+│   │           └── workflowLabels.ts    # Step labels and titles
 │   │
 │   ├── pages/
 │   │   ├── Login.tsx        # Authentication form
 │   │   ├── Dashboard.tsx    # Stats + recent documents table (role-aware)
 │   │   ├── Students.tsx     # Student directory + student recycle bin
 │   │   ├── Search.tsx       # Document search + document recycle bin
-│   │   ├── ImportScanner.tsx# Upload / camera-scan + metadata tagging workflow
+│   │   ├── ImportScanner.tsx# One-line re-export of features/import-scanner
 │   │   ├── Settings.tsx     # Users, document types, archive, backup
 │   │   ├── ActivityLog.tsx  # Audit log viewer
 │   │   └── Help.tsx         # Inline help and feature documentation
@@ -174,11 +239,22 @@ registrar-archiving-system/
 │   │   └── jscanify.d.ts   # Type stubs for jscanify + OpenCV globals
 │   │
 │   └── utils/
+│       ├── cameraCapabilities.ts # Camera capability helpers
 │       ├── cn.ts              # clsx + tailwind-merge helper
+│       ├── debounce.ts        # Debounce helper used by search inputs
+│       ├── error.ts           # Shared error helpers
 │       ├── format.ts          # formatDate, formatTimestamp (Asia/Manila TZ)
 │       ├── imageProcessing.ts # Manual rectangular crop (canvas)
 │       ├── jscanifyScanner.ts # jscanify lazy-load, detectPaperQuad, extract
 │       └── permissions.ts     # DOCUMENT_ACTION_PERMISSIONS constant + helper
+│
+├── tests/                # Vitest suites (dev-only; never packaged)
+│   ├── features/import-scanner/lib/  # cameraErrors, documentValidation,
+│   │                                 # editableImages, queueHelpers,
+│   │                                 # studentSearch, workflowLabels
+│   ├── electron/services/studentQueries.test.ts  # the .cjs SQL builders
+│   ├── utils/            # format.test.ts, debounce.test.ts
+│   └── helpers/fixtures.ts  # Shared Student / DocumentType / file fixtures
 │
 ├── public/
 │   └── scanner/            # Generated at install time — do not edit
@@ -200,6 +276,12 @@ registrar-archiving-system/
 ├── tsconfig.json           # Renderer TypeScript config (strict mode)
 ├── tsconfig.node.json      # Tooling TypeScript config (vite.config.ts)
 ├── vite.config.ts          # Vite: React plugin, Tailwind, @ alias, base './'
+├── vitest.config.ts        # Test config: @ alias, node environment, tests/ glob
+├── eslint.config.mjs       # Flat ESLint config — every rule is set to "warn"
+├── .prettierrc.json        # Style: no semi in TS, single quotes, .cjs keeps semi
+├── .prettierignore         # node_modules, dist, release, public/scanner, *.md, …
+├── REFACTOR_NOTES.md       # Running refactor decision log (not part of the app)
+├── REFACTOR_SMOKE_TEST.md  # Manual smoke-test checklist for the refactor
 ├── INSTALL_AND_RUN.cmd     # Windows one-click setup script (requests UAC elevation)
 └── README.md               # This file
 ```
@@ -247,7 +329,7 @@ Documents are organised into a hierarchy that mirrors the physical filing conven
                 └── Birth Certificate.jpg
 ```
 
-Supported program-folder mappings (defined in `PROGRAM_FOLDERS` in `main.cjs`):
+Supported program-folder mappings (defined in `PROGRAM_FOLDERS` in `electron/services/folderNaming.cjs`):
 
 | `program_level` value | Folder name |
 |---|---|
@@ -266,7 +348,7 @@ If a student's `program_level` is not one of these four values, the system refus
 
 ## 6. Database Schema
 
-The current schema is created by `initializeDatabase()` in `main.cjs` and kept up to date by the idempotent `runMigrations()` function that runs on every startup. The schema below reflects the **current live structure** after all migrations.
+The current schema is created by `initializeDatabase()` in `electron/db/connection.cjs` and kept up to date by the idempotent `runMigrations()` function in `electron/db/migrations.cjs`, which runs on every startup. The schema below reflects the **current live structure** after all migrations.
 
 ```mermaid
 erDiagram
@@ -428,12 +510,12 @@ sequenceDiagram
 
 ### Roles
 
-Two roles are defined in the database `CHECK` constraint and enforced by every privileged IPC handler via the `isAdmin(userId)` helper in `main.cjs`:
+Two roles are defined in the database `CHECK` constraint and enforced by every privileged IPC handler via the `isAdmin(userId)` helper in `electron/services/authz.cjs`:
 
 ```javascript
 async function isAdmin(userId) {
   if (!userId) return false;
-  const user = db.prepare('SELECT role FROM users WHERE id = ?').get(userId);
+  const user = getDb().prepare('SELECT role FROM users WHERE id = ?').get(userId);
   return user && user.role === 'admin';
 }
 ```
@@ -471,9 +553,8 @@ flowchart TD
 
     C --> E[File staged in\nfilesWithMetadata state]
     D --> F[Live camera preview\ndetectPaperQuad every 350 ms]
-    F --> G[Capture frame to canvas\nsend to ImageEditor]
-    G --> H[ImageEditor: auto-crop\non open via jscanify]
-    H --> E
+    F --> G[Capture frame to canvas\nauto-crop applied only on a\nconfident detection]
+    G --> E
 
     E --> I[User fills metadata\nstudent · document type · year]
     I --> J{Validation\nstudent required\ndoc type required}
@@ -499,7 +580,7 @@ flowchart TD
 
 ### File-naming and collision avoidance
 
-When a document is filed, `pickCollisionFreeFileName()` in `main.cjs` scans the destination folder on the actual file system. The first file uses the plain document-type name (e.g., `Form 137.jpg`). Subsequent files in the same folder receive a numeric suffix: `Form 137 (2).jpg`, `Form 137 (3).jpg`, and so on. This prevents overwrites without involving a sequence column in the database.
+When a document is filed, `pickCollisionFreeFileName()` in `electron/services/folderNaming.cjs` scans the destination folder on the actual file system. The first file uses the plain document-type name (e.g., `Form 137.jpg`). Subsequent files in the same folder receive a numeric suffix: `Form 137 (2).jpg`, `Form 137 (3).jpg`, and so on. This prevents overwrites without involving a sequence column in the database.
 
 ---
 
@@ -529,18 +610,23 @@ initScanner() called on first camera use
   Repeat calls share the same Promise; a failed attempt resets it for retry
 ```
 
-### Live detection (ImportScanner.tsx)
+### Live detection (`ImportScannerPage.tsx`)
 
-Every **350 ms** (`SCANNER_CONFIG.LIVE_DETECT_INTERVAL_MS`), the scanner calls `detectPaperQuad()` on a downscaled copy of the current video frame (max side 640 px, `LIVE_ANALYSIS_MAX_SIDE`). The detected quad corners are drawn on an overlay canvas to give real-time visual feedback.
+Every **350 ms** (`SCANNER_CONFIG.LIVE_DETECT_INTERVAL_MS`), `runLiveDetection()` copies the current video frame onto a scratch canvas downscaled to a max side of 640 px (`LIVE_ANALYSIS_MAX_SIDE`), runs `detectPaperQuad()` on it, and paints the result through `drawLiveOutline()` (`src/features/import-scanner/lib/liveOutline.ts`) so the overlay tracks the page in real time. A confident detection sets `documentFound`; a detection that returns a quad without enough confidence sets `edgesUncertain` instead, and the preview labels it as uncertain.
 
-### Capture and auto-crop (ImageEditor.tsx)
+### Capture and auto-crop (`handleCapturePhoto`)
 
-When the user captures a frame:
-1. The full-resolution frame (up to `CAPTURE_ANALYSIS_MAX_SIDE` = 1600 px on the longer side) is sent to `ImageEditor`.
-2. The `ImageEditor` opens with `autoDetectOnOpen = true`.
-3. `runAutoCrop()` calls `detectPaperQuad()` and then `extractPaperDataUrl()` (jscanify perspective-warp).
-4. The warped image replaces the working copy in the editor.
-5. The user can accept, manually adjust, or rotate before saving.
+Capture runs entirely in the page — the editor is not opened automatically:
+
+1. The full-resolution frame is drawn onto a canvas and exported as JPEG at `IMAGE_QUALITY`.
+2. **With auto-crop on** and the scanner ready, that canvas is re-detected with `detectPaperQuad(canvas, { maxSide: SCANNER_CONFIG.LIVE_ANALYSIS_MAX_SIDE })` — the same 640 px analysis size as the live outline, so the capture decision matches the overlay the user was just shown.
+3. Only a **confident** detection is applied: `extractPaperDataUrl()` perspective-warps the page and the queue item is saved as that cropped result (`croppedPage = true`).
+4. Any other outcome — detection off, not ready, no quad, low confidence, a failed extraction or a thrown error — keeps the **full frame as framed**. A failed detection never costs the user the capture.
+5. The frame is added to the batch queue and the camera stream stays live for the next page.
+
+**Edit** (the queue's Edit action) opens `ImageEditorModal` → `ImageEditor`, where the page can be re-detected and cropped by hand. Detection inside the editor analyses at the larger `CAPTURE_ANALYSIS_MAX_SIDE` (1600 px), and its two detection buttons (`runAutoCrop`, `handleShowCorners`) both call `runDetection(false)`: the detected corners — or a centred inset box when nothing plausible was found — are offered as draggable handles rather than cropped automatically. The warp is only applied on an explicit Apply, so an unsure detection cannot silently cut the image.
+
+This editor-vs-capture size difference (640 at capture, 1600 in the editor) is recorded as a follow-up in `REFACTOR_NOTES.md`.
 
 ### Quality
 
@@ -682,6 +768,19 @@ npm run typecheck
 
 Runs `tsc --noEmit`. TypeScript is configured with strict mode, `noUnusedLocals`, and `noUnusedParameters`.
 
+### Testing and tooling
+
+Dev-only — none of these run during `npm run build`, and no lint or test output is bundled into the app.
+
+| Command | What it does |
+|---|---|
+| `npm test` | `vitest run --passWithNoTests` — the suites under `tests/` (currently 9 files / 109 tests: the pure `src/features/import-scanner/lib/*` helpers, `src/utils/format.ts`, `src/utils/debounce.ts`, and the pure SQL builders in `electron/services/studentQueries.cjs`). Renderer code is imported through the same `@` alias Vite uses; the `.cjs` service is `require`d directly. |
+| `npm run lint` | Flat ESLint config (`eslint.config.mjs`). **Every rule is set to `warn`**, so it reports problems and still exits 0 — it cannot fail a build. The current warnings are dominated by `react-hooks/rules-of-hooks` on the three admin-gated pages. |
+| `npm run typecheck` | `tsc --noEmit` over `src/` (see above). |
+| `npm run format` | `prettier --write` **with no default path** — it deliberately does nothing (and writes nothing) unless you pass explicit file arguments, e.g. `npm run format -- src/utils/debounce.ts`. `*.md` is ignored via `.prettierignore`. |
+
+Test files live in the top-level `tests/` folder only — never under `src/` or `electron/`, because `electron/**/*` is packaged into the installer.
+
 ---
 
 ## 15. Building for Production
@@ -778,16 +877,30 @@ The following files were read directly to verify every claim in this README:
 
 | File | Purpose |
 |---|---|
-| `electron/main.cjs` | Database paths, schema, migrations, IPC handlers, archive layout, shutdown hooks |
+| `electron/main.cjs` | Startup order only: `createWindow()`, database init + archive migrations, shutdown hooks, `registerAllIpc()` |
+| `electron/paths.cjs` | userData database path, legacy-database copy, `PROJECT_ROOT` / `PRELOAD_PATH` anchors |
+| `electron/window.cjs` | Single `BrowserWindow` reference shared with the IPC modules |
+| `electron/db/connection.cjs` | The one `better-sqlite3` handle, `initializeDatabase()`, `registerDbFunctions()` (`doc_academic_year`), `closeDatabase()` |
+| `electron/db/migrations.cjs` | `runMigrations()` — the idempotent schema migrations |
+| `electron/services/folderNaming.cjs` | `PROGRAM_FOLDERS`, folder/file sanitizers, `pickCollisionFreeFileName()` |
+| `electron/services/archivePaths.cjs` | `getArchiveRoot()`, `validateAndResolvePath()`, `resolveArchivePath()`, `toArchiveRelative()` |
+| `electron/services/archiveMigrations.cjs` | `migrateDocumentTypeFolders()`, `migrateToRelativePaths()` |
+| `electron/services/authz.cjs` | `isAdmin(userId)` |
+| `electron/services/studentQueries.cjs` | Pure SQL builders behind student search / listing |
+| `electron/ipc/*.ipc.cjs` | One domain per file; the `ipcMain.handle` bodies |
 | `electron/preload.js` | Exact list of 39 exposed bridge methods |
 | `src/App.tsx` | Auth state, session storage, route guards |
+| `src/features/import-scanner/components/ImportScannerPage.tsx` | Scanner orchestration, `runLiveDetection`, `handleCapturePhoto` |
+| `src/components/ImageEditor.tsx` | `findQuad` / `runDetection` — editor-side detection and corner handling |
+| `src/constants/scanner.ts` | `SCANNER_CONFIG` (intervals, `LIVE_ANALYSIS_MAX_SIDE`, `CAPTURE_ANALYSIS_MAX_SIDE`) |
+| `src/pages/ImportScanner.tsx` | Confirms it is a one-line re-export |
+| `vitest.config.ts`, `eslint.config.mjs`, `.prettierrc.json`, `.prettierignore` | Tooling behaviour described in §14 |
 | `src/types/index.ts` | Domain type definitions (User, Student, ArchiveDocument, DocumentType…) |
 | `src/types/electron.d.ts` | TypeScript-typed IPC contract |
 | `src/utils/jscanifyScanner.ts` | Scanner asset loading, `initScanner`, `detectPaperQuad`, `extractPaperDataUrl` |
 | `src/utils/format.ts` | Date/timestamp formatting, `Asia/Manila` timezone |
 | `src/utils/permissions.ts` | `DOCUMENT_ACTION_PERMISSIONS` matrix |
 | `src/constants/image.ts` | `IMAGE_QUALITY = 0.92` |
-| `src/constants/scanner.ts` | `SCANNER_CONFIG` (intervals, max sides) |
 | `src/pages/Dashboard.tsx` | Role-aware stat display |
 | `scripts/prepare-scanner-assets.mjs` | Asset copy logic, offline guarantee |
 | `package.json` | Package versions, scripts, electron-builder config |
