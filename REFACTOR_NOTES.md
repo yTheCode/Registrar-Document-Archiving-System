@@ -292,8 +292,10 @@ No code edited in 3a. All line numbers are `src/pages/ImportScanner.tsx` on
 branch `refactor/phase-3`. Imported directly (not lazy) at src/App.tsx:7 and
 routed at src/App.tsx:99 (`/import`, admin-only per the Phase-0 uncertainty note).
 
-Counts: 33 `useState`, 12 `useRef`, 9 `useEffect`, 1 `useMemo`, 1 derived-state
-cluster, 39 handler/helper functions, ~985 lines of JSX.
+Counts (verified by grep on this file): 39 `useState`, 11 `useRef`, 10 `useEffect`,
+1 `useMemo`, 46 component-level functions/helpers (incl. `newTempId` and the
+`renderStudentSearch` JSX factory), plus `showError` from `useToast` (57).
+JSX is lines 1324-2305 (~980 lines).
 
 ### 8.1 Logical sections
 
