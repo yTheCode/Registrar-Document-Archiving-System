@@ -8,390 +8,9 @@ const bcrypt = require('bcryptjs');
 // folder creation, legacy database copy) previously ran here at module load.
 const { userDataPath, dbDir, dbPath, ELECTRON_DIR, PROJECT_ROOT, PRELOAD_PATH } = require('./paths.cjs');
 const { getMainWindow, setMainWindow } = require('./window.cjs');
+const { getDb, setDb, initializeDatabase, closeDatabase, registerDbFunctions } = require('./db/connection.cjs');
+const { runMigrations } = require('./db/migrations.cjs');
 
-let db;
-
-// Run migrations to ensure database schema is up to date
-function runMigrations() {
-  console.log('Running database migrations...');
-  
-  // Migration: Add metadata_json column to documents table if missing
-  const documentsColumns = db.prepare("PRAGMA table_info(documents)").all();
-  const hasMetadataJson = documentsColumns.some(col => col.name === 'metadata_json');
-  
-  if (!hasMetadataJson) {
-    console.log('Adding metadata_json column to documents table...');
-    db.exec('ALTER TABLE documents ADD COLUMN metadata_json TEXT');
-    console.log('✓ Added metadata_json column');
-  }
-
-  // Users are hard-deleted now (see users:delete), but earlier builds only
-  // stamped deleted_at. Those rows still show up in the user list with no way
-  // to remove them, so purge them once on startup. Activity logs keep their
-  // reference and fall back to the 'Deleted User' label like any other
-  // hard-deleted account.
-  const usersColumns = db.prepare("PRAGMA table_info(users)").all();
-
-  if (!usersColumns.some(col => col.name === 'deleted_at')) {
-    console.log('Adding deleted_at column to users table...');
-    db.exec('ALTER TABLE users ADD COLUMN deleted_at TEXT');
-    console.log('✓ Added deleted_at column');
-  }
-
-  if (usersColumns.some(col => col.name === 'deleted_at')) {
-    const legacy = db.prepare('SELECT COUNT(*) AS count FROM users WHERE deleted_at IS NOT NULL').get().count;
-    if (legacy > 0) {
-      const removed = db.prepare('DELETE FROM users WHERE deleted_at IS NOT NULL').run();
-      console.log(`✓ Purged ${removed.changes} legacy soft-deleted user account(s)`);
-    }
-  }
-  // Migration: Add school_year and program_level columns to students table if missing
-  const studentsColumns = db.prepare("PRAGMA table_info(students)").all();
-
-  if (!studentsColumns.some(col => col.name === 'school_year')) {
-    console.log('Adding school_year column to students table...');
-    db.exec('ALTER TABLE students ADD COLUMN school_year TEXT');
-    console.log('✓ Added school_year column');
-  }
-
-  if (!studentsColumns.some(col => col.name === 'program_level')) {
-    console.log('Adding program_level column to students table...');
-    db.exec('ALTER TABLE students ADD COLUMN program_level TEXT');
-    console.log('✓ Added program_level column');
-  }
-
-  // Migration: Add deleted_at to students so deletion is a soft-delete into a
-  // recycle bin (the row and its documents stay intact and can be restored).
-  if (!studentsColumns.some(col => col.name === 'deleted_at')) {
-    console.log('Adding deleted_at column to students table...');
-    db.exec('ALTER TABLE students ADD COLUMN deleted_at TEXT');
-    console.log('✓ Added deleted_at column');
-  }
-
-  // Migration: standardize the program level terminology. "Graduate" and
-  // "Masters" were the same category under two names; both become the single
-  // standard term "Graduate School" so filters and folder lookups stay
-  // consistent. Idempotent — after the first run no rows match.
-  const renamedLevels = db.prepare(
-    "UPDATE students SET program_level = 'Graduate School' WHERE program_level IN ('Graduate', 'Masters')"
-  ).run();
-  if (renamedLevels.changes > 0) {
-    console.log(`✓ Standardized ${renamedLevels.changes} student program level(s) to 'Graduate School'`);
-  }
-
-  // Migration: relax NOT NULL on students.student_id (SQLite can't ALTER a
-  // column constraint, so rebuild the table)
-  const studentIdCol = db.prepare("PRAGMA table_info(students)").all().find(col => col.name === 'student_id');
-  if (studentIdCol && studentIdCol.notnull === 1) {
-    console.log('Rebuilding students table to make student_id nullable...');
-    rebuildTable(
-      'students',
-      STUDENTS_TABLE_SCHEMA,
-      `SELECT id, student_id, first_name, last_name, middle_name, school_year, program_level, created_at, deleted_at FROM students`
-    );
-    console.log('✓ students.student_id is now nullable');
-  }
-
-  // Migration: drop the legacy naming_templates and folder_structures tables
-  // plus the document_types columns they fed. File naming now derives from the
-  // document type name, and nothing has read these since the dead IPC
-  // handlers were removed.
-  const legacyTables = db.prepare(
-    "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('naming_templates', 'folder_structures')"
-  ).all();
-  if (legacyTables.length > 0) {
-    console.log('Dropping legacy tables:', legacyTables.map(t => t.name).join(', '));
-    db.exec('DROP TABLE IF EXISTS naming_templates');
-    db.exec('DROP TABLE IF EXISTS folder_structures');
-    console.log('✓ Dropped legacy tables');
-  }
-
-  const docTypeColumns = db.prepare("PRAGMA table_info(document_types)").all();
-  for (const col of ['default_folder_path', 'naming_template_id']) {
-    if (docTypeColumns.some(c => c.name === col)) {
-      console.log(`Dropping legacy column document_types.${col}...`);
-      db.exec(`ALTER TABLE document_types DROP COLUMN ${col}`);
-      console.log(`✓ Dropped legacy column document_types.${col}`);
-    }
-  }
-
-  // Migration: drop document_type_fields (FK into metadata_fields) then
-  // metadata_fields — these tables are no longer used.
-  const obsoleteTables = db.prepare(
-    "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('document_type_fields', 'metadata_fields')"
-  ).all().map(t => t.name);
-  if (obsoleteTables.includes('document_type_fields')) {
-    console.log('Dropping obsolete table: document_type_fields');
-    db.exec('DROP TABLE document_type_fields');
-    console.log('✓ Dropped document_type_fields');
-  }
-  if (obsoleteTables.includes('metadata_fields')) {
-    console.log('Dropping obsolete table: metadata_fields');
-    db.exec('DROP TABLE metadata_fields');
-    console.log('✓ Dropped metadata_fields');
-  }
-
-  // Migration: drop document_types.status and document_types.updated_at
-  const freshDocTypeColumns = db.prepare("PRAGMA table_info(document_types)").all();
-  for (const col of ['status', 'updated_at']) {
-    if (freshDocTypeColumns.some(c => c.name === col)) {
-      console.log(`Dropping column document_types.${col}...`);
-      db.exec(`ALTER TABLE document_types DROP COLUMN ${col}`);
-      console.log(`✓ Dropped document_types.${col}`);
-    }
-  }
-
-  // Migration: Add deleted_at column to documents table for soft-delete support
-  const documentsColumnsCheck = db.prepare("PRAGMA table_info(documents)").all();
-  if (!documentsColumnsCheck.some(col => col.name === 'deleted_at')) {
-    console.log('Adding deleted_at column to documents table...');
-    db.exec('ALTER TABLE documents ADD COLUMN deleted_at TEXT');
-    console.log('✓ Added deleted_at column to documents');
-  }
-
-  // Migration: stamp the archiving user's name onto every document. Accounts are
-  // hard-deleted, so the join to users cannot be the source of the credit — the
-  // row has to carry the name itself. Backfilling runs only when the column is
-  // first added; after that each insert writes its own value.
-  if (!documentsColumnsCheck.some(col => col.name === 'created_by_name')) {
-    console.log('Adding created_by_name column to documents table...');
-    db.exec('ALTER TABLE documents ADD COLUMN created_by_name TEXT');
-    db.prepare(`
-      UPDATE documents
-      SET created_by_name = (SELECT username FROM users WHERE users.id = documents.created_by)
-      WHERE created_by_name IS NULL AND created_by IS NOT NULL
-    `).run();
-    db.prepare("UPDATE documents SET created_by_name = 'Deleted User' WHERE created_by_name IS NULL").run();
-    console.log('✓ Added and backfilled created_by_name column');
-  }
-
-  // Create index on documents.deleted_at for recycle bin queries
-  const indexExists = db.prepare(
-    "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_documents_deleted'"
-  ).get();
-  if (!indexExists) {
-    console.log('Creating index on documents.deleted_at...');
-    db.exec('CREATE INDEX idx_documents_deleted ON documents(deleted_at)');
-    console.log('✓ Created index idx_documents_deleted');
-  }
-
-  // Migration: Drop requires_student_info column (now always student-centric)
-  const docTypeColumnsCheck = db.prepare("PRAGMA table_info(document_types)").all();
-  if (docTypeColumnsCheck.some(col => col.name === 'requires_student_info')) {
-    console.log('Dropping requires_student_info column from document_types table...');
-    db.exec('ALTER TABLE document_types DROP COLUMN requires_student_info');
-    console.log('✓ Dropped requires_student_info column');
-  }
-
-  // Migration: Drop category column (all document types are student-centric by design)
-  const docTypeCategoryCheck = db.prepare("PRAGMA table_info(document_types)").all();
-  if (docTypeCategoryCheck.some(col => col.name === 'category')) {
-    console.log('Dropping category column from document_types table...');
-    db.exec('ALTER TABLE document_types DROP COLUMN category');
-    console.log('✓ Dropped category column');
-  }
-
-  // Migration: drop students.updated_at (requires a table rebuild in SQLite
-  // because it carries a DEFAULT constraint that prevents simple DROP COLUMN
-  // on some SQLite versions, and to be fully safe we use the rename pattern).
-  const studentsColsCheck = db.prepare("PRAGMA table_info(students)").all();
-  if (studentsColsCheck.some(col => col.name === 'updated_at')) {
-    console.log('Rebuilding students table to drop updated_at...');
-    rebuildTable(
-      'students',
-      STUDENTS_TABLE_SCHEMA,
-      `SELECT id, student_id, first_name, last_name, middle_name, school_year, program_level, created_at, deleted_at FROM students`
-    );
-    console.log('✓ Dropped students.updated_at');
-  }
-
-  console.log('Database migrations complete');
-}
-
-const STUDENTS_TABLE_SCHEMA = `
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  student_id TEXT UNIQUE,
-  first_name TEXT NOT NULL,
-  last_name TEXT NOT NULL,
-  middle_name TEXT,
-  school_year TEXT,
-  program_level TEXT,
-  created_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  deleted_at TEXT
-`;
-
-function rebuildTable(tableName, newSchema, insertSelect) {
-  const tempName = `${tableName}_new`;
-  db.pragma('foreign_keys = OFF');
-  db.exec(`
-    CREATE TABLE ${tempName} (${newSchema});
-    INSERT INTO ${tempName} ${insertSelect};
-    DROP TABLE ${tableName};
-    ALTER TABLE ${tempName} RENAME TO ${tableName};
-  `);
-  // Leave checks off: this connection runs with them off on purpose (see
-  // initializeDatabase), and switching them back on here would make the first
-  // hard-deleted user of the session fail on its documents and log rows.
-  db.pragma('foreign_keys = OFF');
-}
-
-// SQL helpers that must exist on every live connection. doc_academic_year
-// extracts the year tag from a document's metadata_json; parsing in JS means
-// malformed or legacy JSON yields NULL instead of the "malformed JSON" error
-// that json_extract would throw inside a query (which would fail every search,
-// not just year-filtered ones). Must be re-registered after every reopen,
-// including the backup/restore path.
-function registerDbFunctions(handle) {
-  handle.function('doc_academic_year', { deterministic: true }, (metadataJson) => {
-    if (!metadataJson) return null;
-    try {
-      const year = JSON.parse(metadataJson)?.academic_year;
-      return typeof year === 'string' && year.trim() ? year.trim() : null;
-    } catch {
-      return null;
-    }
-  });
-}
-
-// Initialize database
-function initializeDatabase() {
-  db = new Database(dbPath);
-  registerDbFunctions(db);
-  // Hard-deleted users must leave their documents and activity log rows
-  // behind, and both tables reference users(id). SQLite ships with FK checks
-  // off, so state it explicitly instead of inheriting whichever rebuild
-  // migration last switched them on for this connection.
-  db.pragma('foreign_keys = OFF');
-  // Create tables
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      username TEXT UNIQUE NOT NULL,
-      password_hash TEXT NOT NULL,
-      role TEXT NOT NULL CHECK(role IN ('admin', 'user')),
-      status TEXT DEFAULT 'active' CHECK(status IN ('active', 'inactive')),
-      created_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-      updated_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS students (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      student_id TEXT UNIQUE,
-      first_name TEXT NOT NULL,
-      last_name TEXT NOT NULL,
-      middle_name TEXT,
-      school_year TEXT,
-      program_level TEXT,
-      created_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-      deleted_at TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS document_types (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT UNIQUE NOT NULL,
-      created_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS documents (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      student_id INTEGER,
-      document_type_id INTEGER NOT NULL,
-      file_name TEXT NOT NULL,
-      file_path TEXT NOT NULL,
-      metadata_json TEXT,
-      created_by INTEGER NOT NULL,
-      created_by_name TEXT,
-      created_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-      updated_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-      FOREIGN KEY (student_id) REFERENCES students(id),
-      FOREIGN KEY (document_type_id) REFERENCES document_types(id),
-      FOREIGN KEY (created_by) REFERENCES users(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS activity_logs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      action TEXT NOT NULL,
-      target_type TEXT,
-      target_id INTEGER,
-      details TEXT,
-      created_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-      FOREIGN KEY (user_id) REFERENCES users(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS settings (
-      key TEXT PRIMARY KEY,
-      value TEXT NOT NULL,
-      updated_at DATETIME DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-    );
-  `);
-
-  db.exec('CREATE INDEX IF NOT EXISTS idx_documents_created ON documents(created_at DESC);');
-
-  // Check if default admin exists
-  const adminExists = db.prepare('SELECT COUNT(*) as count FROM users WHERE role = ?').get('admin');
-  
-  if (adminExists.count === 0) {
-    // Create default admin account: username=admin, password=admin123
-    const hashedPassword = bcrypt.hashSync('admin123', 10);
-    db.prepare('INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)')
-      .run('admin', hashedPassword, 'admin');
-    console.log('Default admin account created: username=admin, password=admin123');
-  }
-
-  // Check if default regular user exists
-  const userExists = db.prepare('SELECT COUNT(*) as count FROM users WHERE username = ?').get('user');
-  
-  if (userExists.count === 0) {
-    // Create default regular user account: username=user, password=user123
-    const hashedPassword = bcrypt.hashSync('user123', 10);
-    db.prepare('INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)')
-      .run('user', hashedPassword, 'user');
-    console.log('Default regular user account created: username=user, password=user123');
-  }
-
-  // Add default student document types if none exist (student-centric model only)
-  const docTypesCount = db.prepare('SELECT COUNT(*) as count FROM document_types').get();
-  if (docTypesCount.count === 0) {
-    const studentDocumentTypes = [
-      'Transcript of Records (TOR)',
-      'Form 137',
-      'Birth Certificate',
-      'Clearance',
-      'Certificate',
-      'Student Form',
-      'Application Form',
-      'Diploma'
-    ];
-    
-    const insertDocType = db.prepare('INSERT INTO document_types (name) VALUES (?)');
-    for (const typeName of studentDocumentTypes) {
-      insertDocType.run(typeName);
-    }
-    console.log(`✓ Initialized ${studentDocumentTypes.length} student document types`);
-  }
-
-  // Run migrations to update existing databases
-  runMigrations();
-
-  // Set default archive directory if not set
-  const archiveDir = db.prepare('SELECT value FROM settings WHERE key = ?').get('archive_directory');
-  if (!archiveDir) {
-    const defaultArchive = path.join(userDataPath, 'Archive');
-    if (!fs.existsSync(defaultArchive)) {
-      fs.mkdirSync(defaultArchive, { recursive: true });
-    }
-    db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run('archive_directory', defaultArchive);
-  }
-
-  // Move any legacy flat-stored student documents into document-type folders
-  migrateDocumentTypeFolders();
-
-  // Rewrite legacy absolute document paths archive-relative
-  migrateToRelativePaths();
-
-  console.log('Database initialized at:', dbPath);
-}
 
 function createWindow() {
   const mainWindow = new BrowserWindow({
@@ -421,6 +40,12 @@ function createWindow() {
 app.whenReady().then(() => {
   try {
     initializeDatabase();
+
+    // Move any legacy flat-stored student documents into document-type folders
+    migrateDocumentTypeFolders();
+
+    // Rewrite legacy absolute document paths archive-relative
+    migrateToRelativePaths();
   } catch (error) {
     console.error('Failed to initialize database:', error);
     dialog.showErrorBox(
@@ -444,17 +69,6 @@ app.whenReady().then(() => {
   });
 });
 
-function closeDatabase() {
-  try {
-    if (db) {
-      db.close();
-      db = null;
-    }
-  } catch (error) {
-    console.error('Error closing database on quit:', error);
-  }
-}
-
 app.on('before-quit', () => {
   closeDatabase();
 });
@@ -471,7 +85,7 @@ app.on('window-all-closed', () => {
 // Helper function to check if user is admin
 async function isAdmin(userId) {
   if (!userId) return false;
-  const user = db.prepare('SELECT role FROM users WHERE id = ?').get(userId);
+  const user = getDb().prepare('SELECT role FROM users WHERE id = ?').get(userId);
   return user && user.role === 'admin';
 }
 
@@ -500,7 +114,7 @@ function buildStudentSearchFilter(term, tableAlias = '') {
 // Authentication
 ipcMain.handle('auth:login', async (event, { username, password }) => {
   try {
-    const user = db.prepare("SELECT * FROM users WHERE username = ? AND status = 'active' AND deleted_at IS NULL").get(username);
+    const user = getDb().prepare("SELECT * FROM users WHERE username = ? AND status = 'active' AND deleted_at IS NULL").get(username);
     
     if (!user) {
       return { success: false, error: 'Invalid username or password' };
@@ -513,7 +127,7 @@ ipcMain.handle('auth:login', async (event, { username, password }) => {
     }
 
     // Log activity
-    db.prepare('INSERT INTO activity_logs (user_id, action) VALUES (?, ?)')
+    getDb().prepare('INSERT INTO activity_logs (user_id, action) VALUES (?, ?)')
       .run(user.id, 'login');
 
     return {
@@ -583,9 +197,9 @@ function buildStudentListWhere(options = {}, term = null) {
 ipcMain.handle('students:getAll', async (event, opts = {}) => {
   try {
     const { where, params } = buildStudentListWhere(opts);
-    const total = db.prepare(`SELECT COUNT(*) AS count FROM students ${where}`).get(...params).count;
+    const total = getDb().prepare(`SELECT COUNT(*) AS count FROM students ${where}`).get(...params).count;
     const { tail, params: pageParams } = buildStudentPage(opts);
-    const students = db.prepare(`SELECT * FROM students ${where}${tail}`).all(...params, ...pageParams);
+    const students = getDb().prepare(`SELECT * FROM students ${where}${tail}`).all(...params, ...pageParams);
     return { success: true, students, total };
   } catch (error) {
     return { success: false, error: error.message };
@@ -595,9 +209,9 @@ ipcMain.handle('students:getAll', async (event, opts = {}) => {
 ipcMain.handle('students:search', async (event, searchTerm, opts = {}) => {
   try {
     const { where, params } = buildStudentListWhere(opts, searchTerm);
-    const total = db.prepare(`SELECT COUNT(*) AS count FROM students ${where}`).get(...params).count;
+    const total = getDb().prepare(`SELECT COUNT(*) AS count FROM students ${where}`).get(...params).count;
     const { tail, params: pageParams } = buildStudentPage(opts);
-    const students = db.prepare(`SELECT * FROM students ${where}${tail}`).all(...params, ...pageParams);
+    const students = getDb().prepare(`SELECT * FROM students ${where}${tail}`).all(...params, ...pageParams);
     return { success: true, students, total };
   } catch (error) {
     return { success: false, error: error.message };
@@ -609,10 +223,10 @@ ipcMain.handle('students:search', async (event, searchTerm, opts = {}) => {
 // in the UI so the standard options always appear.
 ipcMain.handle('students:getFilterOptions', async () => {
   try {
-    const schoolYears = db.prepare(
+    const schoolYears = getDb().prepare(
       "SELECT DISTINCT school_year AS value FROM students WHERE deleted_at IS NULL AND school_year IS NOT NULL AND school_year != '' ORDER BY school_year DESC"
     ).all().map(r => r.value);
-    const programLevels = db.prepare(
+    const programLevels = getDb().prepare(
       "SELECT DISTINCT program_level AS value FROM students WHERE deleted_at IS NULL AND program_level IS NOT NULL AND program_level != '' ORDER BY program_level ASC"
     ).all().map(r => r.value);
     return { success: true, schoolYears, programLevels };
@@ -623,7 +237,7 @@ ipcMain.handle('students:getFilterOptions', async () => {
 
 ipcMain.handle('students:getById', async (event, id) => {
   try {
-    const student = db.prepare('SELECT * FROM students WHERE id = ?').get(id);
+    const student = getDb().prepare('SELECT * FROM students WHERE id = ?').get(id);
     return { success: true, student };
   } catch (error) {
     return { success: false, error: error.message };
@@ -659,7 +273,7 @@ ipcMain.handle('students:create', async (event, studentData, userId) => {
     // Hard error on duplicate student ID — a UNIQUE violation would otherwise
     // surface raw SQLite text to the user
     if (studentId) {
-      const idClash = db.prepare('SELECT id, first_name, last_name FROM students WHERE student_id = ?').get(studentId);
+      const idClash = getDb().prepare('SELECT id, first_name, last_name FROM students WHERE student_id = ?').get(studentId);
       if (idClash) {
         return { success: false, error: `Student ID "${studentId}" is already assigned to ${idClash.first_name} ${idClash.last_name} (record #${idClash.id}).` };
       }
@@ -668,7 +282,7 @@ ipcMain.handle('students:create', async (event, studentData, userId) => {
     // Possible-duplicate detection; the client confirms "Add anyway?" and
     // resubmits with force: true to bypass this check
     if (!studentData.force) {
-      const dup = db.prepare(`
+      const dup = getDb().prepare(`
         SELECT id, first_name, last_name, school_year, program_level FROM students
         WHERE UPPER(first_name) = UPPER(?)
           AND UPPER(COALESCE(middle_name, '')) = UPPER(?)
@@ -691,7 +305,7 @@ ipcMain.handle('students:create', async (event, studentData, userId) => {
       }
     }
 
-    const result = db.prepare(`
+    const result = getDb().prepare(`
       INSERT INTO students (student_id, first_name, last_name, middle_name, school_year, program_level)
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(
@@ -738,13 +352,13 @@ ipcMain.handle('students:update', async (event, { id, studentData, userId }) => 
     // Same friendly guard as students:create — a UNIQUE violation here would
     // otherwise surface raw SQLite text
     if (studentId) {
-      const idClash = db.prepare('SELECT id, first_name, last_name FROM students WHERE student_id = ? AND id != ?').get(studentId, id);
+      const idClash = getDb().prepare('SELECT id, first_name, last_name FROM students WHERE student_id = ? AND id != ?').get(studentId, id);
       if (idClash) {
         return { success: false, error: `Student ID "${studentId}" is already assigned to ${idClash.first_name} ${idClash.last_name} (record #${idClash.id}).` };
       }
     }
 
-    db.prepare(`
+    getDb().prepare(`
       UPDATE students
       SET student_id = ?, first_name = ?, last_name = ?, middle_name = ?, school_year = ?, program_level = ?
       WHERE id = ?
@@ -771,7 +385,7 @@ ipcMain.handle('students:delete', async (event, id, userId) => {
       return { success: false, error: 'Permission denied. Admin access required.' };
     }
 
-    const student = db.prepare('SELECT id, deleted_at FROM students WHERE id = ?').get(id);
+    const student = getDb().prepare('SELECT id, deleted_at FROM students WHERE id = ?').get(id);
     if (!student) {
       return { success: false, error: 'Student not found.' };
     }
@@ -782,7 +396,7 @@ ipcMain.handle('students:delete', async (event, id, userId) => {
 
     // Soft-delete into the recycle bin. The row and any linked documents stay
     // intact so the record can be restored later.
-    db.prepare(
+    getDb().prepare(
       "UPDATE students SET deleted_at = (strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE id = ?"
     ).run(id);
     return { success: true };
@@ -801,8 +415,8 @@ ipcMain.handle('students:getDeleted', async (event, userId, options = {}) => {
     const limit = Number.isFinite(options.limit) && options.limit > 0 ? Math.floor(options.limit) : 50;
     const offset = Number.isFinite(options.offset) && options.offset > 0 ? Math.floor(options.offset) : 0;
 
-    const total = db.prepare('SELECT COUNT(*) as count FROM students WHERE deleted_at IS NOT NULL').get().count;
-    const students = db.prepare(
+    const total = getDb().prepare('SELECT COUNT(*) as count FROM students WHERE deleted_at IS NOT NULL').get().count;
+    const students = getDb().prepare(
       'SELECT * FROM students WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT ? OFFSET ?'
     ).all(limit, offset);
 
@@ -818,7 +432,7 @@ ipcMain.handle('students:restore', async (event, id, userId) => {
     if (!await isAdmin(userId)) {
       return { success: false, error: 'Permission denied. Admin access required.' };
     }
-    db.prepare(
+    getDb().prepare(
       "UPDATE students SET deleted_at = NULL WHERE id = ?"
     ).run(id);
     return { success: true };
@@ -834,11 +448,11 @@ ipcMain.handle('students:purge', async (event, id, userId) => {
     if (!await isAdmin(userId)) {
       return { success: false, error: 'Permission denied. Admin access required.' };
     }
-    const docCount = db.prepare('SELECT COUNT(*) as count FROM documents WHERE student_id = ?').get(id);
+    const docCount = getDb().prepare('SELECT COUNT(*) as count FROM documents WHERE student_id = ?').get(id);
     if (docCount.count > 0) {
       return { success: false, error: `Cannot permanently delete a student with ${docCount.count} document(s). Delete their documents first.` };
     }
-    db.prepare('DELETE FROM students WHERE id = ?').run(id);
+    getDb().prepare('DELETE FROM students WHERE id = ?').run(id);
     return { success: true };
   } catch (error) {
     return { success: false, error: error.message };
@@ -854,7 +468,7 @@ ipcMain.handle('documents:delete', async (event, { id, userId }) => {
     }
 
     // Get document info for logging
-    const doc = db.prepare('SELECT file_name, deleted_at FROM documents WHERE id = ?').get(id);
+    const doc = getDb().prepare('SELECT file_name, deleted_at FROM documents WHERE id = ?').get(id);
 
     if (!doc) {
       return { success: false, error: 'Document not found' };
@@ -866,10 +480,10 @@ ipcMain.handle('documents:delete', async (event, { id, userId }) => {
     }
 
     // Soft-delete: set deleted_at timestamp, preserving the database record and physical file
-    db.prepare("UPDATE documents SET deleted_at = (strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE id = ?").run(id);
+    getDb().prepare("UPDATE documents SET deleted_at = (strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE id = ?").run(id);
 
     // Log activity
-    db.prepare('INSERT INTO activity_logs (user_id, action, target_type, target_id, details) VALUES (?, ?, ?, ?, ?)')
+    getDb().prepare('INSERT INTO activity_logs (user_id, action, target_type, target_id, details) VALUES (?, ?, ?, ?, ?)')
       .run(userId, 'document_deleted', 'document', id, `Soft-deleted document: ${doc.file_name}`);
 
     return { success: true };
@@ -887,7 +501,7 @@ ipcMain.handle('documents:getDeleted', async (event, opts = {}) => {
     }
 
     // Count total deleted documents
-    const totalResult = db.prepare(`
+    const totalResult = getDb().prepare(`
       SELECT COUNT(*) AS count
       FROM documents d
       WHERE d.deleted_at IS NOT NULL
@@ -900,7 +514,7 @@ ipcMain.handle('documents:getDeleted', async (event, opts = {}) => {
     const sortDir = String(opts.sortDir).toLowerCase() === 'asc' ? 'ASC' : 'DESC';
 
     // Fetch deleted documents with student and document type info
-    const documents = db.prepare(`
+    const documents = getDb().prepare(`
       SELECT 
         d.*,
         s.student_id AS student_number,
@@ -933,7 +547,7 @@ ipcMain.handle('documents:restore', async (event, id, userId) => {
       return { success: false, error: 'Permission denied. Admin access required.' };
     }
 
-    const doc = db.prepare('SELECT id, file_name, deleted_at FROM documents WHERE id = ?').get(id);
+    const doc = getDb().prepare('SELECT id, file_name, deleted_at FROM documents WHERE id = ?').get(id);
     if (!doc) {
       return { success: false, error: 'Document not found.' };
     }
@@ -942,10 +556,10 @@ ipcMain.handle('documents:restore', async (event, id, userId) => {
     }
 
     // Restore: clear deleted_at timestamp
-    db.prepare("UPDATE documents SET deleted_at = NULL WHERE id = ?").run(id);
+    getDb().prepare("UPDATE documents SET deleted_at = NULL WHERE id = ?").run(id);
 
     // Log activity
-    db.prepare('INSERT INTO activity_logs (user_id, action, target_type, target_id, details) VALUES (?, ?, ?, ?, ?)')
+    getDb().prepare('INSERT INTO activity_logs (user_id, action, target_type, target_id, details) VALUES (?, ?, ?, ?, ?)')
       .run(userId, 'document_restored', 'document', id, `Restored document: ${doc.file_name}`);
 
     return { success: true };
@@ -961,7 +575,7 @@ ipcMain.handle('documents:purge', async (event, id, userId) => {
       return { success: false, error: 'Permission denied. Admin access required.' };
     }
 
-    const doc = db.prepare('SELECT id, file_name, file_path, deleted_at FROM documents WHERE id = ?').get(id);
+    const doc = getDb().prepare('SELECT id, file_name, file_path, deleted_at FROM documents WHERE id = ?').get(id);
     if (!doc) {
       return { success: false, error: 'Document not found.' };
     }
@@ -995,10 +609,10 @@ ipcMain.handle('documents:purge', async (event, id, userId) => {
     }
 
     // Delete database record
-    db.prepare('DELETE FROM documents WHERE id = ?').run(id);
+    getDb().prepare('DELETE FROM documents WHERE id = ?').run(id);
 
     // Log activity
-    db.prepare('INSERT INTO activity_logs (user_id, action, target_type, target_id, details) VALUES (?, ?, ?, ?, ?)')
+    getDb().prepare('INSERT INTO activity_logs (user_id, action, target_type, target_id, details) VALUES (?, ?, ?, ?, ?)')
       .run(userId, 'document_purged', 'document', id, 
            `Permanently deleted document: ${doc.file_name}${fileDeleted ? ' (file removed)' : ' (database only)'}`);
 
@@ -1014,7 +628,7 @@ ipcMain.handle('documents:update', async (event, { id, userId, documentTypeId, s
       return { success: false, error: 'Permission denied. Admin access required.' };
     }
 
-    const doc = db.prepare('SELECT * FROM documents WHERE id = ?').get(id);
+    const doc = getDb().prepare('SELECT * FROM documents WHERE id = ?').get(id);
     if (!doc) {
       return { success: false, error: 'Document not found' };
     }
@@ -1022,13 +636,13 @@ ipcMain.handle('documents:update', async (event, { id, userId, documentTypeId, s
     const newTypeId = documentTypeId ?? doc.document_type_id;
     const newStudentId = studentId === undefined ? doc.student_id : studentId;
 
-    const type = db.prepare('SELECT id, name FROM document_types WHERE id = ?').get(newTypeId);
+    const type = getDb().prepare('SELECT id, name FROM document_types WHERE id = ?').get(newTypeId);
     if (!type) {
       return { success: false, error: 'Document type not found' };
     }
 
     if (newStudentId) {
-      const student = db.prepare('SELECT first_name, last_name, program_level, school_year FROM students WHERE id = ?').get(newStudentId);
+      const student = getDb().prepare('SELECT first_name, last_name, program_level, school_year FROM students WHERE id = ?').get(newStudentId);
       if (!student) {
         return { success: false, error: 'Student not found' };
       }
@@ -1057,9 +671,9 @@ ipcMain.handle('documents:update', async (event, { id, userId, documentTypeId, s
 
     // Metadata-only edit: no filesystem work.
     if (!locationChanged) {
-      db.prepare('UPDATE documents SET metadata_json = ?, updated_at = (strftime(\'%Y-%m-%dT%H:%M:%fZ\',\'now\')) WHERE id = ?')
+      getDb().prepare('UPDATE documents SET metadata_json = ?, updated_at = (strftime(\'%Y-%m-%dT%H:%M:%fZ\',\'now\')) WHERE id = ?')
         .run(metadataJson, id);
-      db.prepare('INSERT INTO activity_logs (user_id, action, target_type, target_id, details) VALUES (?, ?, ?, ?, ?)')
+      getDb().prepare('INSERT INTO activity_logs (user_id, action, target_type, target_id, details) VALUES (?, ?, ?, ?, ?)')
         .run(userId, 'document_updated', 'document', id, `Updated document (metadata): ${doc.file_name}`);
       return { success: true, fileName: doc.file_name };
     }
@@ -1085,7 +699,7 @@ ipcMain.handle('documents:update', async (event, { id, userId, documentTypeId, s
     // write fails so the two never disagree.
     fs.renameSync(oldResolved, newAbsolute);
     try {
-      db.prepare('UPDATE documents SET document_type_id = ?, student_id = ?, metadata_json = ?, file_name = ?, file_path = ?, updated_at = (strftime(\'%Y-%m-%dT%H:%M:%fZ\',\'now\')) WHERE id = ?')
+      getDb().prepare('UPDATE documents SET document_type_id = ?, student_id = ?, metadata_json = ?, file_name = ?, file_path = ?, updated_at = (strftime(\'%Y-%m-%dT%H:%M:%fZ\',\'now\')) WHERE id = ?')
         .run(newTypeId, newStudentId, metadataJson, finalName, toArchiveRelative(newAbsolute), id);
     } catch (dbError) {
       fs.renameSync(newAbsolute, oldResolved);
@@ -1103,7 +717,7 @@ ipcMain.handle('documents:update', async (event, { id, userId, documentTypeId, s
       // Folder cleanup is best-effort.
     }
 
-    db.prepare('INSERT INTO activity_logs (user_id, action, target_type, target_id, details) VALUES (?, ?, ?, ?, ?)')
+    getDb().prepare('INSERT INTO activity_logs (user_id, action, target_type, target_id, details) VALUES (?, ?, ?, ?, ?)')
       .run(userId, 'document_updated', 'document', id, `Updated document: ${before} -> type=${newTypeId}, student=${newStudentId ?? 'general'}, name=${finalName}`);
 
     return { success: true, fileName: finalName };
@@ -1152,7 +766,7 @@ ipcMain.handle('documents:search', async (event, filters = {}) => {
 
     // Total matching rows (independent of paging) so the UI can show
     // "Showing X–Y of Z" and render correct page controls.
-    const total = db.prepare(`SELECT COUNT(*) AS count ${fromSql}`).get(...params).count;
+    const total = getDb().prepare(`SELECT COUNT(*) AS count ${fromSql}`).get(...params).count;
 
     // Whitelisted sort columns — never interpolate a raw client string into SQL.
     const sortColumns = {
@@ -1182,7 +796,7 @@ ipcMain.handle('documents:search', async (event, filters = {}) => {
       params.push(Math.max(1, Math.floor(filters.limit)), Math.max(0, Math.floor(filters.offset || 0)));
     }
 
-    const documents = db.prepare(query).all(...params);
+    const documents = getDb().prepare(query).all(...params);
 
     // Log any documents with broken student links
     const documentsWithBrokenLinks = documents.filter(doc => doc.student_id && !doc.first_name);
@@ -1200,7 +814,7 @@ ipcMain.handle('documents:search', async (event, filters = {}) => {
 // Document Types
 ipcMain.handle('documentTypes:getAll', async () => {
   try {
-    const types = db.prepare('SELECT * FROM document_types ORDER BY name').all();
+    const types = getDb().prepare('SELECT * FROM document_types ORDER BY name').all();
     return { success: true, types };
   } catch (error) {
     return { success: false, error: error.message };
@@ -1214,10 +828,10 @@ ipcMain.handle('documentTypes:create', async (event, { name, userId }) => {
       return { success: false, error: 'Permission denied. Admin access required.' };
     }
 
-    const result = db.prepare('INSERT INTO document_types (name) VALUES (?)').run(name);
+    const result = getDb().prepare('INSERT INTO document_types (name) VALUES (?)').run(name);
     
     // Log activity
-    db.prepare('INSERT INTO activity_logs (user_id, action, target_type, target_id, details) VALUES (?, ?, ?, ?, ?)')
+    getDb().prepare('INSERT INTO activity_logs (user_id, action, target_type, target_id, details) VALUES (?, ?, ?, ?, ?)')
       .run(userId, 'document_type_created', 'document_type', result.lastInsertRowid, `Created document type: ${name}`);
 
     return { success: true, id: result.lastInsertRowid };
@@ -1234,15 +848,15 @@ ipcMain.handle('documentTypes:delete', async (event, { id, userId }) => {
     }
 
     // Check if any documents use this type
-    const docCount = db.prepare('SELECT COUNT(*) as count FROM documents WHERE document_type_id = ?').get(id);
+    const docCount = getDb().prepare('SELECT COUNT(*) as count FROM documents WHERE document_type_id = ?').get(id);
     if (docCount.count > 0) {
       return { success: false, error: `Cannot delete document type with ${docCount.count} document(s) using it.` };
     }
 
-    db.prepare('DELETE FROM document_types WHERE id = ?').run(id);
+    getDb().prepare('DELETE FROM document_types WHERE id = ?').run(id);
     
     // Log activity
-    db.prepare('INSERT INTO activity_logs (user_id, action, target_type, target_id, details) VALUES (?, ?, ?, ?, ?)')
+    getDb().prepare('INSERT INTO activity_logs (user_id, action, target_type, target_id, details) VALUES (?, ?, ?, ?, ?)')
       .run(userId, 'document_type_deleted', 'document_type', id, 'Deleted document type');
 
     return { success: true };
@@ -1255,7 +869,7 @@ ipcMain.handle('documentTypes:delete', async (event, { id, userId }) => {
 ipcMain.handle('file:copy', async (event, { sourcePath, destPath }) => {
   try {
     // Get archive root from settings
-    const archiveSetting = db.prepare('SELECT value FROM settings WHERE key = ?').get('archive_directory');
+    const archiveSetting = getDb().prepare('SELECT value FROM settings WHERE key = ?').get('archive_directory');
     const archiveRoot = archiveSetting?.value || path.join(app.getPath('documents'), 'ADZU_Archive');
     
     // Validate destination path to prevent traversal attacks
@@ -1412,7 +1026,7 @@ ipcMain.handle('file:readPickedAsBase64', async (event, filePath) => {
 // Chromium's print pipeline can't rasterize the PDF plugin or office viewers.
 ipcMain.handle('file:print', async (event, { filePath, userId }) => {
   const logPrint = (details) => {
-    db.prepare('INSERT INTO activity_logs (user_id, action, target_type, details) VALUES (?, ?, ?, ?)')
+    getDb().prepare('INSERT INTO activity_logs (user_id, action, target_type, details) VALUES (?, ?, ?, ?)')
       .run(userId, 'document_printed', 'document', details);
   };
 
@@ -1527,7 +1141,7 @@ ipcMain.handle('file:exportCopy', async (event, { filePath, userId }) => {
 
     fs.copyFileSync(resolvedPath, chosenPath);
 
-    db.prepare('INSERT INTO activity_logs (user_id, action, target_type, details) VALUES (?, ?, ?, ?)')
+    getDb().prepare('INSERT INTO activity_logs (user_id, action, target_type, details) VALUES (?, ?, ?, ?)')
       .run(userId, 'document_shared', 'document', `Exported copy: ${path.basename(resolvedPath)} -> ${chosenPath}`);
 
     return { success: true, filePath: chosenPath };
@@ -1548,7 +1162,7 @@ ipcMain.handle('users:getAll', async (event, userId, opts = {}) => {
       return { success: false, error: 'Permission denied. Admin access required.' };
     }
 
-    const total = db.prepare('SELECT COUNT(*) AS count FROM users').get().count;
+    const total = getDb().prepare('SELECT COUNT(*) AS count FROM users').get().count;
     const USER_SORT_COLUMNS = {
       username: 'username',
       role: 'role',
@@ -1563,7 +1177,7 @@ ipcMain.handle('users:getAll', async (event, userId, opts = {}) => {
       query += ' LIMIT ? OFFSET ?';
       params.push(Math.max(1, Math.floor(opts.limit)), Math.max(0, Math.floor(opts.offset || 0)));
     }
-    const users = db.prepare(query).all(...params);
+    const users = getDb().prepare(query).all(...params);
     return { success: true, users, total };
   } catch (error) {
     return { success: false, error: error.message };
@@ -1578,11 +1192,11 @@ ipcMain.handle('users:create', async (event, { username, password, role, created
     }
 
     const hashedPassword = bcrypt.hashSync(password, 10);
-    const result = db.prepare('INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)')
+    const result = getDb().prepare('INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)')
       .run(username, hashedPassword, role);
 
     // Log activity
-    db.prepare('INSERT INTO activity_logs (user_id, action, target_type, target_id, details) VALUES (?, ?, ?, ?, ?)')
+    getDb().prepare('INSERT INTO activity_logs (user_id, action, target_type, target_id, details) VALUES (?, ?, ?, ?, ?)')
       .run(createdBy, 'user_created', 'user', result.lastInsertRowid, `Created user: ${username}`);
 
     return { success: true, id: result.lastInsertRowid };
@@ -1598,14 +1212,14 @@ ipcMain.handle('users:updateStatus', async (event, { userId, status, updatedBy }
       return { success: false, error: 'Permission denied. Admin access required.' };
     }
 
-    const target = db.prepare('SELECT role, status FROM users WHERE id = ?').get(userId);
+    const target = getDb().prepare('SELECT role, status FROM users WHERE id = ?').get(userId);
     if (!target) {
       return { success: false, error: 'User not found.' };
     }
 
     // Never leave the system without an active administrator
     if (status === 'inactive' && target.status === 'active' && target.role === 'admin') {
-      const activeAdmins = db.prepare(
+      const activeAdmins = getDb().prepare(
         "SELECT COUNT(*) AS count FROM users WHERE role = 'admin' AND status = 'active'"
       ).get();
       if (activeAdmins.count <= 1) {
@@ -1613,11 +1227,11 @@ ipcMain.handle('users:updateStatus', async (event, { userId, status, updatedBy }
       }
     }
 
-    db.prepare("UPDATE users SET status = ?, updated_at = (strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE id = ?")
+    getDb().prepare("UPDATE users SET status = ?, updated_at = (strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE id = ?")
       .run(status, userId);
 
     // Log activity
-    db.prepare('INSERT INTO activity_logs (user_id, action, target_type, target_id, details) VALUES (?, ?, ?, ?, ?)')
+    getDb().prepare('INSERT INTO activity_logs (user_id, action, target_type, target_id, details) VALUES (?, ?, ?, ?, ?)')
       .run(updatedBy, 'user_status_changed', 'user', userId, `Status changed to: ${status}`);
 
     return { success: true };
@@ -1637,7 +1251,7 @@ ipcMain.handle('users:delete', async (event, { userId, deletedBy }) => {
       return { success: false, error: 'You cannot delete your own account.' };
     }
 
-    const target = db.prepare('SELECT username, role, status FROM users WHERE id = ?').get(userId);
+    const target = getDb().prepare('SELECT username, role, status FROM users WHERE id = ?').get(userId);
     if (!target) {
       return { success: false, error: 'User not found.' };
     }
@@ -1646,7 +1260,7 @@ ipcMain.handle('users:delete', async (event, { userId, deletedBy }) => {
     // administrator. Only removing an active admin lowers that count, so an
     // inactive admin can always go as long as one active admin remains.
     if (target.role === 'admin') {
-      const activeAdmins = db.prepare(
+      const activeAdmins = getDb().prepare(
         "SELECT COUNT(*) AS count FROM users WHERE role = 'admin' AND status = 'active'"
       ).get().count;
       const remaining = target.status === 'active' ? activeAdmins - 1 : activeAdmins;
@@ -1657,10 +1271,10 @@ ipcMain.handle('users:delete', async (event, { userId, deletedBy }) => {
 
     // **PERMANENTLY DELETE** the user account — the row is removed entirely.
     // Activity logs keep their user_id and fall back to 'Deleted User'.
-    db.prepare("DELETE FROM users WHERE id = ?").run(userId);
+    getDb().prepare("DELETE FROM users WHERE id = ?").run(userId);
 
     // Log activity
-    db.prepare('INSERT INTO activity_logs (user_id, action, target_type, target_id, details) VALUES (?, ?, ?, ?, ?)')
+    getDb().prepare('INSERT INTO activity_logs (user_id, action, target_type, target_id, details) VALUES (?, ?, ?, ?, ?)')
       .run(deletedBy, 'user_deleted', 'user', userId, `Permanently deleted user: ${target.username}`);
 
     return { success: true };
@@ -1670,7 +1284,7 @@ ipcMain.handle('users:delete', async (event, { userId, deletedBy }) => {
 });
 ipcMain.handle('settings:get', async (event, key) => {
   try {
-    const setting = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
+    const setting = getDb().prepare('SELECT value FROM settings WHERE key = ?').get(key);
     return { success: true, value: setting ? setting.value : null };
   } catch (error) {
     return { success: false, error: error.message };
@@ -1684,13 +1298,13 @@ ipcMain.handle('settings:set', async (event, { key, value, userId }) => {
       return { success: false, error: 'Permission denied. Admin access required.' };
     }
 
-    db.prepare(`
+    getDb().prepare(`
       INSERT INTO settings (key, value, updated_at) 
       VALUES (?, ?, (strftime('%Y-%m-%dT%H:%M:%fZ','now')))
       ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     `).run(key, value, value);
 
-    db.prepare('INSERT INTO activity_logs (user_id, action, target_type, details) VALUES (?, ?, ?, ?)')
+    getDb().prepare('INSERT INTO activity_logs (user_id, action, target_type, details) VALUES (?, ?, ?, ?)')
       .run(userId, 'setting_updated', 'setting', `Updated setting: ${key}`);
 
     return { success: true };
@@ -1738,7 +1352,7 @@ ipcMain.handle('archive:purgeAll', async (event, { userId, password }) => {
 
     // Re-verify the password here, not just in the dialog, so a purge can never
     // be replayed without the administrator's credentials.
-    const account = db.prepare('SELECT password_hash, status FROM users WHERE id = ?').get(userId);
+    const account = getDb().prepare('SELECT password_hash, status FROM users WHERE id = ?').get(userId);
     if (!account || account.status !== 'active') {
       return { success: false, error: 'This account is not available for a purge.' };
     }
@@ -1757,34 +1371,34 @@ ipcMain.handle('archive:purgeAll', async (event, { userId, password }) => {
     };
 
     // Step 1: Get counts before deletion
-    const studentCount = db.prepare('SELECT COUNT(*) AS count FROM students').get().count;
-    const documentCount = db.prepare('SELECT COUNT(*) AS count FROM documents').get().count;
-    const logCount = db.prepare('SELECT COUNT(*) AS count FROM activity_logs').get().count;
+    const studentCount = getDb().prepare('SELECT COUNT(*) AS count FROM students').get().count;
+    const documentCount = getDb().prepare('SELECT COUNT(*) AS count FROM documents').get().count;
+    const logCount = getDb().prepare('SELECT COUNT(*) AS count FROM activity_logs').get().count;
 
     // Step 2: Get all document file paths for physical deletion
-    const documents = db.prepare('SELECT id, file_path, file_name FROM documents').all();
+    const documents = getDb().prepare('SELECT id, file_path, file_name FROM documents').all();
 
     // Step 3: Delete database records first (transactions don't cover filesystem)
     try {
-      db.exec('BEGIN TRANSACTION');
+      getDb().exec('BEGIN TRANSACTION');
       
       // Delete all documents (cascades will not affect students due to FK design)
-      db.prepare('DELETE FROM documents').run();
+      getDb().prepare('DELETE FROM documents').run();
       results.documentsDeleted = documentCount;
 
       // Delete all students (both active and soft-deleted)
-      db.prepare('DELETE FROM students').run();
+      getDb().prepare('DELETE FROM students').run();
       results.studentsDeleted = studentCount;
 
       // Wipe the activity log too: the purge is a final-submission reset, so
       // the audit trail of the emptied archive goes with it. The purge itself
       // is written back after the commit as the only remaining entry.
-      db.prepare('DELETE FROM activity_logs').run();
+      getDb().prepare('DELETE FROM activity_logs').run();
       results.logsDeleted = logCount;
 
-      db.exec('COMMIT');
+      getDb().exec('COMMIT');
     } catch (dbError) {
-      db.exec('ROLLBACK');
+      getDb().exec('ROLLBACK');
       return { success: false, error: `Database purge failed: ${dbError.message}` };
     }
 
@@ -1825,7 +1439,7 @@ ipcMain.handle('archive:purgeAll', async (event, { userId, password }) => {
 
     // Record the purge itself — written after the wipe so it survives as the
     // only entry left in the audit trail
-    db.prepare('INSERT INTO activity_logs (user_id, action, target_type, details) VALUES (?, ?, ?, ?)')
+    getDb().prepare('INSERT INTO activity_logs (user_id, action, target_type, details) VALUES (?, ?, ?, ?)')
       .run(userId, 'archive_purged', 'system',
            `Archive purged: ${results.studentsDeleted} students, ${results.documentsDeleted} documents, ${results.filesDeleted} files, ${results.logsDeleted} log entries deleted`);
 
@@ -1880,7 +1494,7 @@ ipcMain.handle('logs:add', async (event, { userId, action, targetType, targetId,
       return { success: false, error: 'Permission denied. Only administrators can add activity logs.' };
     }
 
-    db.prepare(`
+    getDb().prepare(`
       INSERT INTO activity_logs (user_id, action, target_type, target_id, details)
       VALUES (?, ?, ?, ?, ?)
     `).run(userId, action, targetType || null, targetId || null, details || null);
@@ -1898,7 +1512,7 @@ ipcMain.handle('logs:getRecent', async (event, limit = 100, userId, offset = 0, 
       return { success: false, error: 'Permission denied. Admin access required.' };
     }
 
-    const total = db.prepare('SELECT COUNT(*) AS count FROM activity_logs').get().count;
+    const total = getDb().prepare('SELECT COUNT(*) AS count FROM activity_logs').get().count;
     const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 100;
     const safeOffset = Number.isFinite(offset) && offset > 0 ? Math.floor(offset) : 0;
     const LOG_SORT_COLUMNS = {
@@ -1909,7 +1523,7 @@ ipcMain.handle('logs:getRecent', async (event, limit = 100, userId, offset = 0, 
     };
     const orderCol = LOG_SORT_COLUMNS[sortBy] || 'al.created_at';
     const orderDir = String(sortDir).toLowerCase() === 'asc' ? 'ASC' : 'DESC';
-    const logs = db.prepare(`
+    const logs = getDb().prepare(`
       SELECT al.*, 
         COALESCE(u.username, 'Deleted User') as username
       FROM activity_logs al
@@ -1927,13 +1541,13 @@ ipcMain.handle('logs:getRecent', async (event, limit = 100, userId, offset = 0, 
 // Dashboard stats
 ipcMain.handle('dashboard:getStats', async () => {
   try {
-    const studentsCount = db.prepare('SELECT COUNT(*) as count FROM students WHERE deleted_at IS NULL').get();
-    const documentsCount = db.prepare('SELECT COUNT(*) as count FROM documents WHERE deleted_at IS NULL').get();
+    const studentsCount = getDb().prepare('SELECT COUNT(*) as count FROM students WHERE deleted_at IS NULL').get();
+    const documentsCount = getDb().prepare('SELECT COUNT(*) as count FROM documents WHERE deleted_at IS NULL').get();
     // Same column set as documents:search so the dashboard rows can be handed
     // straight to DocumentViewerModal. Students and users are LEFT joined:
     // accounts are hard-deleted, and a document must still open after its
     // creator or student link is gone.
-    const recentDocs = db.prepare(`
+    const recentDocs = getDb().prepare(`
       SELECT
         d.*,
         s.student_id AS student_number, s.first_name, s.last_name, s.middle_name,
@@ -1986,7 +1600,7 @@ function validateAndResolvePath(filePath, archiveRoot) {
 }
 
 function getArchiveRoot() {
-  const archiveSetting = db.prepare('SELECT value FROM settings WHERE key = ?').get('archive_directory');
+  const archiveSetting = getDb().prepare('SELECT value FROM settings WHERE key = ?').get('archive_directory');
   return archiveSetting?.value || path.join(app.getPath('documents'), 'ADZU_Archive');
 }
 
@@ -2017,7 +1631,7 @@ function toArchiveRelative(absolutePath) {
 ipcMain.handle('image:saveBase64', async (event, { base64Data, fileName, destPath }) => {
   try {
     // Get archive root from settings
-    const archiveSetting = db.prepare('SELECT value FROM settings WHERE key = ?').get('archive_directory');
+    const archiveSetting = getDb().prepare('SELECT value FROM settings WHERE key = ?').get('archive_directory');
     const archiveRoot = archiveSetting?.value || path.join(app.getPath('documents'), 'ADZU_Archive');
     
     // Validate path to prevent traversal attacks
@@ -2056,9 +1670,9 @@ ipcMain.handle('documents:createBatch', async (event, { documents, userId }) => 
 
     // The name is stamped per row so the credit survives the account's
     // permanent deletion later on.
-    const actor = db.prepare('SELECT username FROM users WHERE id = ?').get(userId);
+    const actor = getDb().prepare('SELECT username FROM users WHERE id = ?').get(userId);
 
-    const insertStmt = db.prepare(`
+    const insertStmt = getDb().prepare(`
       INSERT INTO documents (student_id, document_type_id, file_name, file_path, metadata_json, created_by, created_by_name)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
@@ -2090,7 +1704,7 @@ ipcMain.handle('documents:createBatch', async (event, { documents, userId }) => 
       }
     }
 
-    db.prepare('INSERT INTO activity_logs (user_id, action, target_type, details) VALUES (?, ?, ?, ?)')
+    getDb().prepare('INSERT INTO activity_logs (user_id, action, target_type, details) VALUES (?, ?, ?, ?)')
       .run(userId, 'batch_documents_created', 'document', `Created ${documents.length} documents`);
 
     return { success: true, ids: createdIds, count: documents.length };
@@ -2141,7 +1755,7 @@ function computeDocumentTypeFolder({ studentId, documentTypeName, archiveRoot })
     return { ok: true, folderPath };
   }
 
-  const student = db.prepare('SELECT * FROM students WHERE id = ?').get(studentId);
+  const student = getDb().prepare('SELECT * FROM students WHERE id = ?').get(studentId);
   if (!student) {
     return { ok: false, error: 'Student not found.' };
   }
@@ -2243,10 +1857,10 @@ function pickCollisionFreeFileName(folderPath, baseName, ext, startAt = 0) {
 // <StudentDir>/<DocumentType>/ here and update the database to match.
 function migrateDocumentTypeFolders() {
   try {
-    const archiveSetting = db.prepare('SELECT value FROM settings WHERE key = ?').get('archive_directory');
+    const archiveSetting = getDb().prepare('SELECT value FROM settings WHERE key = ?').get('archive_directory');
     const archiveRoot = archiveSetting?.value || path.join(app.getPath('documents'), 'ADZU_Archive');
 
-    const docs = db.prepare(`
+    const docs = getDb().prepare(`
       SELECT d.id, d.file_name, d.file_path, d.student_id,
              s.first_name, s.last_name, s.middle_name, s.school_year, s.program_level,
              dt.name AS document_type_name
@@ -2295,7 +1909,7 @@ function migrateDocumentTypeFolders() {
         }
         const newPath = path.join(typeDir, fileName);
         fs.renameSync(currentPath, newPath);
-        db.prepare('UPDATE documents SET file_name = ?, file_path = ?, updated_at = (strftime(\'%Y-%m-%dT%H:%M:%fZ\',\'now\')) WHERE id = ?')
+        getDb().prepare('UPDATE documents SET file_name = ?, file_path = ?, updated_at = (strftime(\'%Y-%m-%dT%H:%M:%fZ\',\'now\')) WHERE id = ?')
           .run(fileName, toArchiveRelative(newPath), doc.id);
         moved++;
       } catch (docErr) {
@@ -2319,13 +1933,13 @@ function migrateDocumentTypeFolders() {
 // they become readable again if the root is re-pointed at their location.
 function migrateToRelativePaths() {
   try {
-    const docs = db.prepare('SELECT id, file_path FROM documents').all();
+    const docs = getDb().prepare('SELECT id, file_path FROM documents').all();
     let converted = 0;
     for (const doc of docs) {
       if (!doc.file_path || !path.isAbsolute(doc.file_path)) continue;
       const relative = toArchiveRelative(doc.file_path);
       if (!relative) continue;
-      db.prepare('UPDATE documents SET file_path = ? WHERE id = ?').run(relative, doc.id);
+      getDb().prepare('UPDATE documents SET file_path = ? WHERE id = ?').run(relative, doc.id);
       converted++;
     }
     if (converted > 0) {
@@ -2351,7 +1965,7 @@ ipcMain.handle('folders:generatePath', async (event, { studentId, documentTypeId
     }
 
     // Get student info for filename generation
-    const student = db.prepare('SELECT * FROM students WHERE id = ?').get(studentId);
+    const student = getDb().prepare('SELECT * FROM students WHERE id = ?').get(studentId);
     if (!student) {
       return { success: false, error: 'Student not found.' };
     }
@@ -2466,13 +2080,13 @@ ipcMain.handle('archive:changeDirectory', async (event, { newRoot, mode, userId 
       fs.rmSync(oldRoot, { recursive: true, force: true });
     }
 
-    db.prepare(`
+    getDb().prepare(`
       INSERT INTO settings (key, value, updated_at)
       VALUES ('archive_directory', ?, (strftime('%Y-%m-%dT%H:%M:%fZ','now')))
       ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     `).run(target, target);
 
-    db.prepare('INSERT INTO activity_logs (user_id, action, target_type, details) VALUES (?, ?, ?, ?)')
+    getDb().prepare('INSERT INTO activity_logs (user_id, action, target_type, details) VALUES (?, ?, ?, ?)')
       .run(userId, 'archive_directory_changed', 'setting',
         mode === 'move'
           ? `Moved archive from ${oldRoot} to ${target} (${movedFiles} files verified)`
@@ -2490,7 +2104,7 @@ ipcMain.handle('archive:checkIntegrity', async (event, { userId }) => {
       return { success: false, error: 'Permission denied. Admin access required.' };
     }
 
-    const docs = db.prepare('SELECT id, file_name, file_path FROM documents ORDER BY id').all();
+    const docs = getDb().prepare('SELECT id, file_name, file_path FROM documents ORDER BY id').all();
     const missing = [];
     let present = 0;
     for (const doc of docs) {
@@ -2502,7 +2116,7 @@ ipcMain.handle('archive:checkIntegrity', async (event, { userId }) => {
       }
     }
 
-    db.prepare('INSERT INTO activity_logs (user_id, action, target_type, details) VALUES (?, ?, ?, ?)')
+    getDb().prepare('INSERT INTO activity_logs (user_id, action, target_type, details) VALUES (?, ?, ?, ?)')
       .run(userId, 'archive_integrity_checked', 'archive', `Integrity check: ${present} of ${docs.length} files present`);
 
     return { success: true, total: docs.length, present, missing };
@@ -2596,9 +2210,9 @@ ipcMain.handle('backup:create', async (event, userId) => {
     tempDbPath = path.join(app.getPath('temp'), `backup-${Date.now()}.db`);
 
     // SQLite's own backup API gives a consistent snapshot of the live database
-    await db.backup(tempDbPath);
+    await getDb().backup(tempDbPath);
 
-    const archiveDir = resolveArchiveDir(db);
+    const archiveDir = resolveArchiveDir(getDb());
     const hasArchive = fs.existsSync(archiveDir);
 
     // Create ZIP archive using archiver
@@ -2642,7 +2256,7 @@ ipcMain.handle('backup:create', async (event, userId) => {
     const sizeMb = (stats.size / 1024 / 1024).toFixed(2);
 
     // Log activity
-    db.prepare('INSERT INTO activity_logs (user_id, action, target_type, details) VALUES (?, ?, ?, ?)')
+    getDb().prepare('INSERT INTO activity_logs (user_id, action, target_type, details) VALUES (?, ?, ?, ?)')
       .run(userId, 'backup_created', 'system',
            `Backup created: ${backupPath} (${sizeMb} MB)`);
 
@@ -2723,16 +2337,16 @@ ipcMain.handle('backup:restore', async (event, userId) => {
     }
 
     // Log BEFORE the destructive part so the attempt survives a failed restore
-    db.prepare('INSERT INTO activity_logs (user_id, action, target_type, details) VALUES (?, ?, ?, ?)')
+    getDb().prepare('INSERT INTO activity_logs (user_id, action, target_type, details) VALUES (?, ?, ?, ?)')
       .run(userId, 'backup_restore_started', 'system',
            `Restoring from: ${backupFilePath}`);
 
     // Snapshot the live database so a failure halfway through can be undone
-    await db.backup(safetyDbPath);
+    await getDb().backup(safetyDbPath);
 
     // Close database connection
     console.log('Closing database connection...');
-    db.close();
+    getDb().close();
     dbClosed = true;
 
     // Replace live database
@@ -2743,8 +2357,8 @@ ipcMain.handle('backup:restore', async (event, userId) => {
 
     // Reopen database
     console.log('Reopening database connection...');
-    db = new Database(dbPath);
-    registerDbFunctions(db);
+    setDb(new Database(dbPath));
+    registerDbFunctions(getDb());
     dbClosed = false;
 
     // A backup can predate the current schema; migrate it now instead of
@@ -2774,7 +2388,7 @@ ipcMain.handle('backup:restore', async (event, userId) => {
     }
 
     // Log success
-    db.prepare('INSERT INTO activity_logs (user_id, action, target_type, details) VALUES (?, ?, ?, ?)')
+    getDb().prepare('INSERT INTO activity_logs (user_id, action, target_type, details) VALUES (?, ?, ?, ?)')
       .run(userId, 'backup_restore_completed', 'system',
            `Restored from: ${backupFilePath}`);
 
@@ -2796,15 +2410,15 @@ ipcMain.handle('backup:restore', async (event, userId) => {
     try {
       if (dbReplaced && fs.existsSync(safetyDbPath)) {
         if (!dbClosed) {
-          db.close();
+          getDb().close();
           dbClosed = true;
         }
         removeDatabaseSidecars(dbPath);
         fs.copyFileSync(safetyDbPath, dbPath);
       }
       if (dbClosed) {
-        db = new Database(dbPath);
-        registerDbFunctions(db);
+        setDb(new Database(dbPath));
+        registerDbFunctions(getDb());
         dbClosed = false;
         runMigrations();
       }
