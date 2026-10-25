@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
-import { Camera, AlertCircle } from 'lucide-react'
+import { AlertCircle } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import { formatStudentYear } from '@/utils/format'
 import ConfirmDialog from '@/components/ConfirmDialog'
@@ -30,6 +30,9 @@ import { drawLiveOutline } from '@/features/import-scanner/lib/liveOutline'
 import AccessRestricted from '@/features/import-scanner/components/AccessRestricted'
 import AddStudentModal from '@/features/import-scanner/components/AddStudentModal'
 import BatchResultsList from '@/features/import-scanner/components/BatchResultsList'
+import CameraPanel from '@/features/import-scanner/components/CameraPanel'
+import CameraPreview from '@/features/import-scanner/components/CameraPreview'
+import CaptureActions from '@/features/import-scanner/components/CaptureActions'
 import DocumentDetailsForm from '@/features/import-scanner/components/DocumentDetailsForm'
 import DocumentNavCard from '@/features/import-scanner/components/DocumentNavCard'
 import DocumentStudentField from '@/features/import-scanner/components/DocumentStudentField'
@@ -1271,161 +1274,40 @@ function ImportScanner({ user }: PageProps) {
             )}
             <>
                 {/* Camera controls */}
-                <div className="flex flex-wrap items-end gap-4 border-b border-[#e8ebef] px-5 py-3">
-                  <div>
-                    <label className="label-caps mb-1 block">Camera</label>
-                    <select
-                      value={deviceId}
-                      onChange={(e) => handleSwitchCamera(e.target.value)}
-                      className="h-9 rounded-md border border-[#d9dfe7] bg-white px-2 text-xs text-[#47576b] outline-none focus:border-[#5688bd]"
-                    >
-                      <option value="">Default camera</option>
-                      {videoDevices.map((d, i) => (
-                        <option key={d.deviceId} value={d.deviceId}>{d.label || `Camera ${i + 1}`}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="label-caps mb-1 block">Quality</label>
-                    <select
-                      value={selectedQuality}
-                      onChange={(e) => { void handleQualityChange(e.target.value) }}
-                      disabled={!cameraStream || qualityOptions.length === 0}
-                      className="h-9 rounded-md border border-[#d9dfe7] bg-white px-2 text-xs text-[#47576b] outline-none focus:border-[#5688bd] disabled:opacity-50"
-                    >
-                      {qualityOptions.length === 0 && <option value="">Reading camera capabilities…</option>}
-                      {qualityOptions.map(q => (
-                        <option key={cameraQualityKey(q)} value={cameraQualityKey(q)}>{q.label}</option>
-                      ))}
-                    </select>
-                    {activeResolution && (
-                      <div className="mono mt-1 text-[10px] text-[#536d89]">Live: {activeResolution}</div>
-                    )}
-                  </div>
-                  <div>
-                    <label className="label-caps mb-1 block">Auto-Crop Scan</label>
-                    <button
-                      type="button"
-                      onClick={handleToggleAutoCrop}
-                      aria-pressed={autoCropEnabled}
-                      className={cn(
-                        'inline-flex h-9 items-center gap-2 rounded-md border px-3 text-xs font-bold transition focus-ring',
-                        autoCropEnabled
-                          ? 'border-[#2b9b72] bg-[#e5f5ee] text-[#22735a]'
-                          : 'border-[#d9dfe7] bg-white text-[#718096] hover:bg-[#f4f6f8]'
-                      )}
-                    >
-                      <span className={cn(
-                        'relative inline-flex h-4 w-7 items-center rounded-full transition',
-                        autoCropEnabled ? 'bg-[#2b9b72]' : 'bg-[#c3ccd6]'
-                      )}>
-                        <span className={cn(
-                          'absolute h-3 w-3 rounded-full bg-white transition-all',
-                          autoCropEnabled ? 'left-3.5' : 'left-0.5'
-                        )} />
-                      </span>
-                      {autoCropEnabled ? 'On' : 'Off'}
-                    </button>
-                  </div>
-                  <div className="ml-auto flex items-center gap-3">
-                    {retakeIndex !== null && (
-                      <span className="rounded-full bg-[#fff6df] px-3 py-1 text-[11px] font-bold text-[#b17f22]">
-                        Retaking document {retakeIndex + 1} — its details will be kept
-                      </span>
-                    )}
-                    <span className="text-xs text-[#718096]">
-                      Scanned: {filesWithMetadata.length} document{filesWithMetadata.length !== 1 ? 's' : ''}
-                    </span>
-                    <button
-                      onClick={handleCancelCamera}
-                      className="rounded-md px-3 py-1.5 text-xs font-bold text-[#536d89] hover:bg-[#f1f4f7]"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
+                <CameraPanel
+                  deviceId={deviceId}
+                  videoDevices={videoDevices}
+                  selectedQuality={selectedQuality}
+                  qualityOptions={qualityOptions}
+                  activeResolution={activeResolution}
+                  cameraStream={cameraStream}
+                  autoCropEnabled={autoCropEnabled}
+                  retakeIndex={retakeIndex}
+                  filesWithMetadata={filesWithMetadata}
+                  onSwitchCamera={handleSwitchCamera}
+                  onQualityChange={handleQualityChange}
+                  onToggleAutoCrop={handleToggleAutoCrop}
+                  onCancelCamera={handleCancelCamera}
+                />
 
                 {/* Live preview */}
-                <div className="relative bg-black" style={{ aspectRatio: '16/9' }}>
-                  <video
-                    ref={videoRef}
-                    autoPlay
-                    playsInline
-                    className="w-full h-full object-contain"
-                  />
-                  {/* jscanify outline: same box as the video and the same letterboxing */}
-                  <canvas
-                    ref={overlayCanvasRef}
-                    className="pointer-events-none absolute inset-0 h-full w-full object-contain"
-                  />
-                  <div className="absolute top-4 left-4 right-4 flex flex-wrap items-start gap-2">
-                    <div className="inline-block bg-black/60 backdrop-blur-sm rounded-md px-3 py-2">
-                      <p className="text-white text-xs font-medium">
-                        Position document in frame. Capture as many as you need — tagging comes after.
-                      </p>
-                    </div>
-                    <div className={cn(
-                      'inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-[11px] font-bold backdrop-blur-sm',
-                      !autoCropEnabled
-                        ? 'bg-black/60 text-white/70'
-                        : scannerState === 'ready' && documentFound
-                        ? 'bg-[#14532d]/80 text-[#bbf7d0]'
-                        : scannerState === 'failed'
-                          ? 'bg-[#7f1d1d]/80 text-[#fecaca]'
-                          : scannerState === 'ready' && edgesUncertain
-                            ? 'bg-[#78350f]/80 text-[#fde68a]'
-                            : 'bg-black/60 text-white/70'
-                    )}>
-                      <span className={cn(
-                        'h-2 w-2 rounded-full',
-                        !autoCropEnabled
-                          ? 'bg-white/50'
-                          : scannerState === 'ready' && documentFound
-                          ? 'bg-[#22c55e]'
-                          : scannerState === 'failed'
-                            ? 'bg-[#f87171]'
-                            : scannerState === 'ready' && edgesUncertain
-                              ? 'bg-[#f59e0b]'
-                              : 'bg-white/50'
-                      )} />
-                      {!autoCropEnabled && 'Auto-crop is OFF — plain capture'}
-                      {autoCropEnabled && scannerState === 'loading' && 'Starting document detection…'}
-                      {autoCropEnabled && scannerState === 'failed' && 'Auto-detection unavailable — capture and crop manually'}
-                      {autoCropEnabled && scannerState === 'ready' && (documentFound
-                        ? 'Document detected — press Capture'
-                        : edgesUncertain
-                          ? 'Edges are unsure — use Edit on this capture to adjust the corners'
-                          : 'Looking for document edges…')}
-                    </div>
-                  </div>
-                </div>
+                <CameraPreview
+                  videoRef={videoRef}
+                  overlayRef={overlayCanvasRef}
+                  autoCropEnabled={autoCropEnabled}
+                  scannerState={scannerState}
+                  documentFound={documentFound}
+                  edgesUncertain={edgesUncertain}
+                />
 
-                <div className="p-5 flex flex-col items-center gap-4">
-                  <button
-                    onClick={handleCapturePhoto}
-                    disabled={!cameraStream}
-                    className="inline-flex items-center justify-center gap-2 rounded-md px-6 py-3 text-sm font-bold transition focus-ring bg-[#24558d] text-white hover:bg-[#1d4778] disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <Camera size={20} />
-                    {retakeIndex !== null ? 'Capture Replacement' : 'Capture Document'}
-                  </button>
-                  <p className="text-[11px] text-[#718096]">
-                    {autoCropEnabled
-                      ? 'Each capture is cropped automatically to the detected page and the camera stays on — position the next page and capture again.'
-                      : 'Each capture is added to the queue exactly as framed and the camera stays on — position the next page and capture again.'}{' '}
-                    {autoCropEnabled
-                      ? 'Use Edit whenever you want to adjust the crop.'
-                      : 'You can still edit any capture manually below.'}
-                  </p>
-
-                  <button
-                    onClick={handleFinishScanning}
-                    disabled={filesWithMetadata.length === 0}
-                    className="inline-flex items-center justify-center gap-2 rounded-md px-4 py-2 text-xs font-bold transition focus-ring border border-[#d7dde5] bg-white text-[#34445a] hover:bg-[#f4f6f8] disabled:opacity-40 disabled:cursor-not-allowed"
-                  >
-                    Finish Scanning ({filesWithMetadata.length})
-                  </button>
-                </div>
+                <CaptureActions
+                  cameraStream={cameraStream}
+                  retakeIndex={retakeIndex}
+                  filesWithMetadata={filesWithMetadata}
+                  autoCropEnabled={autoCropEnabled}
+                  onCapturePhoto={handleCapturePhoto}
+                  onFinishScanning={handleFinishScanning}
+                />
               </>
           </div>
 

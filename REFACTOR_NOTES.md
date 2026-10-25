@@ -769,6 +769,38 @@ If the owner wants §8.6's shape instead, it is a mechanical follow-up commit.
 Verified: typecheck PASS, build PASS, CSS hash unchanged (`index-BVwFChkt.css`, 47.46 kB),
 JS 410.16 → 410.82 kB (+0.66 kB).
 
+### 3b-5 — camera panel, live preview, capture actions (approved 3a)
+
+Created `CameraPanel.tsx` (100 lines) — the camera controls row (Camera select, Quality
+select + `Live:` readout, Auto-Crop toggle, retake badge / scanned count / Cancel). Thirteen
+props; page state and its derived values keep their names, only the four page callbacks were
+renamed (`handleSwitchCamera`→`onSwitchCamera`, `handleQualityChange`→`onQualityChange`,
+`handleToggleAutoCrop`→`onToggleAutoCrop`, `handleCancelCamera`→`onCancelCamera`). The
+`{ void onQualityChange(e.target.value) }` handler body moved as written.
+
+Created `CameraPreview.tsx` (71 lines) — the whole `relative bg-black` 16/9 preview box:
+`<video>`, the jscanify outline `<canvas>`, the positioning hint and the two-ternary status
+pill. The refs stay page-owned and arrive as `videoRef` / `overlayRef` (never `ref`), and
+attach with `ref={videoRef}` / `ref={overlayRef}`; the page still passes `overlayCanvasRef`
+through the `overlayRef` prop. `analysisCanvasRef` and `detectionBusyRef` were never JSX-side
+and remain in the page untouched.
+
+Created `CaptureActions.tsx` (44 lines) — the Capture button, the auto-crop hint paragraph
+(both literal ternaries and the trailing `{' '}` intact) and the Finish Scanning button.
+
+Left in the page, per the conditional-position rule: the `step === 'camera' && (…)` guard, the
+`space-y-4` and `surface-card` wrappers, the `cameraError && (…)` banner and the bare `<>`
+fragment around the three calls. Nothing conditional was moved *inside* a component, so
+`<video>` and the overlay `<canvas>` mount and unmount exactly when the camera step renders —
+`handleCapturePhoto`, `startCamera`'s delayed `srcObject` assignment and the live-detect effect
+are unaffected. No camera state, effect or handler moved; no `useCallback`/`useMemo`/
+`React.memo` added. Page: 1,564 → 1,446 lines (net −118: 3 imports and 3 call sites added,
+163 body lines removed). Page import freed: lucide `Camera` (`cn`, `cameraQualityKey` and
+`CameraQuality` are all still used elsewhere in the page).
+
+Verified: typecheck PASS, build PASS, CSS hash unchanged (`index-BVwFChkt.css`, 47.46 kB),
+JS 410.82 → 411.73 kB (+0.91 kB).
+
 ## After the defense
 
 Follow-ups deliberately deferred until the defense pass is finished.
