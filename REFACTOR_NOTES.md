@@ -600,3 +600,35 @@ Consequences for every later checkpoint:
 Working-tree note: `core.autocrlf=true`, so checked-out sources are CRLF (verified
 against `src/pages/Settings.tsx`); git normalizes them to LF in the index. Nothing
 was mass-reformatted.
+
+### 3b-1 — `lib/` pure logic (approved 3a)
+
+Created under `src/features/import-scanner/lib/` (111 lines total, bodies moved
+verbatim): `workflowLabels.ts` (WORKFLOW_LABELS), `documentValidation.ts`
+(validateDocument + isFileReady, now taking `documentTypes` as a 2nd argument
+because the closure was page state), `editableImages.ts` (isEditableImage),
+`queueHelpers.ts` (getReviewWindow — the three review-pagination lines),
+`studentSearch.ts` (filterStudents, studentIdFromSearchTerm), `cameraErrors.ts`
+(describeCameraError — the `error.name` mapping), `liveOutline.ts`
+(drawLiveOutline, refs replaced by `overlay`/`video` parameters).
+Page: 15 insertions / 92 deletions, 10 call sites rewired; now 2,232 lines.
+Verified: typecheck PASS, build PASS, CSS hash unchanged from 3b-0
+(`index-BVwFChkt`) so no class delta; JS +0.12 kB from the new module wrappers.
+
+**Trap handled:** `validateDocument`/`isFileReady` gained a second parameter, so
+`filesWithMetadata.filter(isFileReady)` would have passed the array **index** as
+`documentTypes`. It is now `.filter(f => isFileReady(f, documentTypes))`.
+`filter(isEditableImage)` stays as-is — its signature is still single-argument.
+
+**Deviations from §9's layout (all to avoid dead abstraction or state moving):**
+- `isStudentWorkflow`/`isScanWorkflow` were NOT put in `workflowLabels.ts`. They
+  are page-derived values read at 16 sites; extracting them as pure predicates
+  would leave either two unused exports or 16 mechanical rewrites. They will be
+  passed as props to the components that need them (3b-2+).
+- `queueHelpers.ts` holds only the pagination math. The `nextTempIdRef` counter
+  stays in the page (it is state, §9 #2) and the three `FileWithMetadata` object
+  literals stay at their sites — each currently has a single call site, so
+  building a shared factory is the DRY pass, which comes after the moves (rule 4
+  and rule 7), not during them.
+- `editableIndices` was not extracted: one 3-line site inside
+  `handleEditAllImages`.

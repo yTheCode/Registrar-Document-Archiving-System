@@ -23,14 +23,13 @@ import type {
   BatchResult,
   Workflow
 } from '@/types'
-
-
-const WORKFLOW_LABELS: Record<Workflow, string> = {
-  'single-student-upload': 'Single Student Import',
-  'single-student-scan': 'Single Student Import',
-  'mixed-batch-upload': 'Mixed-Batch Import',
-  'mixed-batch-scan': 'Mixed-Batch Import'
-}
+import { WORKFLOW_LABELS } from '@/features/import-scanner/lib/workflowLabels'
+import { validateDocument, isFileReady } from '@/features/import-scanner/lib/documentValidation'
+import { isEditableImage } from '@/features/import-scanner/lib/editableImages'
+import { getReviewWindow } from '@/features/import-scanner/lib/queueHelpers'
+import { filterStudents, studentIdFromSearchTerm } from '@/features/import-scanner/lib/studentSearch'
+import { describeCameraError } from '@/features/import-scanner/lib/cameraErrors'
+import { drawLiveOutline } from '@/features/import-scanner/lib/liveOutline'
 
 
 function ImportScanner({ user }: PageProps) {
@@ -163,12 +162,9 @@ function ImportScanner({ user }: PageProps) {
   }
 
   const openAddStudentForm = (onPick: (s: Student) => void) => {
-    // Prefill student_id when the unmatched term looks like an ID (one token containing a digit)
-    const term = searchTerm.trim()
-    const looksLikeId = term.length > 0 && !term.includes(' ') && /\d/.test(term)
     pendingStudentPickRef.current = onPick
     setNewStudentForm({
-      student_id: looksLikeId ? term : '',
+      student_id: studentIdFromSearchTerm(searchTerm),
       first_name: '',
       last_name: '',
       middle_name: '',
@@ -273,37 +269,13 @@ function ImportScanner({ user }: PageProps) {
     setReviewPage(Math.floor(currentFileIndex / PAGINATION.REVIEW_PAGE_SIZE) + 1)
   }, [currentFileIndex])
 
-  const reviewTotalPages = Math.max(1, Math.ceil(filesWithMetadata.length / PAGINATION.REVIEW_PAGE_SIZE))
-  const reviewStart = (Math.min(reviewPage, reviewTotalPages) - 1) * PAGINATION.REVIEW_PAGE_SIZE
-  const reviewSlice = filesWithMetadata.slice(reviewStart, reviewStart + PAGINATION.REVIEW_PAGE_SIZE)
+  const { start: reviewStart, slice: reviewSlice } = getReviewWindow(filesWithMetadata, reviewPage)
 
   const currentFile = filesWithMetadata[currentFileIndex]
   const studentRequiredForCurrent = true // All documents now require a student
 
-  // Single source of truth for document readiness. Used by the review table,
-  // ready counts, the Save button, and final batch validation.
-  const validateDocument = (f: FileWithMetadata): string[] => {
-    const errors: string[] = []
-    if (!f.file && !f.filePath) errors.push('File missing')
-    const dt = documentTypes.find(t => t.id === parseInt(f.documentTypeId))
-    if (!dt) {
-      errors.push('Document Type is missing')
-      return errors
-    }
-    if (!f.student) errors.push('Student is required')
-    return errors
-  }
+  const readyCount = filesWithMetadata.filter(f => isFileReady(f, documentTypes)).length
 
-  const isFileReady = (f: FileWithMetadata) => validateDocument(f).length === 0
-  const readyCount = filesWithMetadata.filter(isFileReady).length
-
-  // Only raster images can be cropped/rotated; PDFs and Office files are skipped
-  const isEditableImage = (f: FileWithMetadata) => {
-    const fileName = f.file.name.toLowerCase()
-    return Boolean(f.isDataUrl) ||
-      fileName.endsWith('.jpg') || fileName.endsWith('.jpeg') ||
-      fileName.endsWith('.png') || fileName.endsWith('.gif')
-  }
   const editableImageCount = filesWithMetadata.filter(isEditableImage).length
 
   const debouncedUpdate = useMemo(
@@ -487,18 +459,7 @@ function ImportScanner({ user }: PageProps) {
       showLiveResolution(track, qualities)
     } catch (error) {
       console.error('Camera access error:', error)
-      let friendly = 'Failed to access the camera. Please try again.'
-      const name = error instanceof Error ? error.name : ''
-      if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
-        friendly = 'Camera permission was denied. Allow camera access and try again.'
-      } else if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
-        friendly = 'No camera was detected. Connect a webcam or document camera and try again.'
-      } else if (name === 'NotReadableError' || name === 'TrackStartError') {
-        friendly = 'The selected camera may be in use by another application. Close the other application and try again.'
-      } else if (name === 'OverconstrainedError') {
-        friendly = 'The selected camera could not satisfy the requested settings. Choose another camera or a lower quality option.'
-      }
-      setCameraError(friendly)
+      setCameraError(describeCameraError(error))
       setMessage({ type: 'error', text: 'Camera access failed. See error message below.' })
     }
   }
@@ -630,42 +591,6 @@ function ImportScanner({ user }: PageProps) {
     if (overlay && ctx) ctx.clearRect(0, 0, overlay.width, overlay.height)
   }, [autoCropEnabled])
 
-  const drawLiveOutline = (quad: ReturnType<typeof detectPaperQuad>, analysisWidth: number) => {
-    const overlay = overlayCanvasRef.current
-    const video = videoRef.current
-    if (!overlay || !video || !video.videoWidth || !video.videoHeight) return
-
-    const ctx = overlay.getContext('2d')
-    if (!ctx) return
-    if (overlay.width !== video.videoWidth || overlay.height !== video.videoHeight) {
-      overlay.width = video.videoWidth
-      overlay.height = video.videoHeight
-    }
-    ctx.clearRect(0, 0, overlay.width, overlay.height)
-    if (!quad) return
-
-    // The canvas shares the video's box and letterboxes identically, so
-    // intrinsic analysis pixels map straight onto the preview.
-    const k = overlay.width / analysisWidth
-    const points = [
-      quad.corners.topLeftCorner,
-      quad.corners.topRightCorner,
-      quad.corners.bottomRightCorner,
-      quad.corners.bottomLeftCorner,
-    ]
-    ctx.beginPath()
-    ctx.moveTo(points[0].x * k, points[0].y * k)
-    for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x * k, points[i].y * k)
-    ctx.closePath()
-    ctx.lineWidth = Math.max(3, overlay.width / 320)
-    // A guess is shown as a dashed outline: only a confident quad promises an
-    // automatic crop, and the editor is where the user settles the corners.
-    ctx.setLineDash(quad.confident ? [] : [overlay.width / 60, overlay.width / 90])
-    ctx.strokeStyle = quad.confident ? '#22c55e' : '#f59e0b'
-    ctx.stroke()
-    ctx.setLineDash([])
-  }
-
   const runLiveDetection = () => {
     if (detectionBusyRef.current) return
     const video = videoRef.current
@@ -689,7 +614,7 @@ function ImportScanner({ user }: PageProps) {
       ctx.drawImage(video, 0, 0, width, height)
 
       const quad = detectPaperQuad(scratch)
-      drawLiveOutline(quad, width)
+      drawLiveOutline(overlayCanvasRef.current, videoRef.current, quad, width)
       setDocumentFound(Boolean(quad?.confident))
       setEdgesUncertain(quad !== null && !quad.confident)
     } catch (error) {
@@ -1051,7 +976,7 @@ function ImportScanner({ user }: PageProps) {
 
     // Validate EVERY document independently using the single validateDocument function
     const incomplete = finalized
-      .map((f, i) => ({ index: i, errors: validateDocument(f) }))
+      .map((f, i) => ({ index: i, errors: validateDocument(f, documentTypes) }))
       .filter(x => x.errors.length > 0)
     if (incomplete.length > 0) {
       const first = incomplete[0]
@@ -1193,9 +1118,7 @@ function ImportScanner({ user }: PageProps) {
     }
   }
 
-  const filteredStudents = students.filter(s =>
-    `${s.first_name} ${s.last_name} ${s.student_id ?? ''} ${s.school_year ?? ''}`.toLowerCase().includes(searchTerm.toLowerCase())
-  )
+  const filteredStudents = filterStudents(students, searchTerm)
 
   const handleStartWorkflow = (wf: Workflow) => {
     setWorkflow(wf)
@@ -1781,7 +1704,7 @@ function ImportScanner({ user }: PageProps) {
                     const i = reviewStart + idx
                     const dt = documentTypes.find(t => t.id === parseInt(f.documentTypeId))
                     const needsStudent = !f.student
-                    const errors = validateDocument(f)
+                    const errors = validateDocument(f, documentTypes)
                     const ready = errors.length === 0
                     return (
                       <tr
