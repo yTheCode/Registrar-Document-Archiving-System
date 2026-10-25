@@ -7,7 +7,7 @@ import ConfirmDialog from '@/components/ConfirmDialog'
 import PageHeader from '@/components/ui/PageHeader'
 import Pagination from '@/components/ui/Pagination'
 import { useToast } from '@/components/ui/Toast'
-import { detectPaperQuad, initScanner } from '@/utils/jscanifyScanner'
+import { detectPaperQuad, extractPaperDataUrl, initScanner } from '@/utils/jscanifyScanner'
 import { applyCameraQuality, cameraQualityKey, formatResolution, listCameraQualities, readTrackResolution } from '@/utils/cameraCapabilities'
 import type { CameraQuality } from '@/utils/cameraCapabilities'
 import { debounce } from '@/utils/debounce'
@@ -703,10 +703,11 @@ function ImportScanner({ user }: PageProps) {
   }
 
   /**
-   * Capture a frame and add it to the batch exactly as framed. The editor is
-   * never opened on intake — cropping stays a deliberate, per-document choice
-   * through the Edit action. The stream stays live so the next page can be
-   * scanned without re-opening the camera; it is released when leaving this step.
+   * Capture a frame and add it to the batch. With auto-crop on, a confidently
+   * detected page is cropped and straightened at capture; otherwise the frame is
+   * added exactly as framed. Cropping can always be redone through the Edit
+   * action. The stream stays live so the next page can be scanned without
+   * re-opening the camera; it is released when leaving this step.
    */
   const handleCapturePhoto = () => {
     const video = videoRef.current
@@ -724,7 +725,24 @@ function ImportScanner({ user }: PageProps) {
     if (!ctx) return
 
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
-    const imageDataUrl = canvas.toDataURL('image/jpeg', IMAGE_QUALITY)
+    let imageDataUrl = canvas.toDataURL('image/jpeg', IMAGE_QUALITY)
+    let croppedPage = false
+    if (autoCropEnabled && scannerState === 'ready') {
+      // A failed detection must never cost the user the capture, so the full
+      // frame stands whenever nothing usable comes back.
+      try {
+        const detected = detectPaperQuad(canvas, { maxSide: SCANNER_CONFIG.CAPTURE_ANALYSIS_MAX_SIDE })
+        if (detected && detected.confident) {
+          const extracted = extractPaperDataUrl(canvas, detected)
+          if (extracted) {
+            imageDataUrl = extracted
+            croppedPage = true
+          }
+        }
+      } catch (error) {
+        console.error('Capture-time page detection failed:', error)
+      }
+    }
     const fileName = `captured_${Date.now()}.jpg`
 
     const wasRetake = retakeIndex !== null
@@ -760,11 +778,19 @@ function ImportScanner({ user }: PageProps) {
     setDocumentFound(false)
     setEdgesUncertain(false)
 
+    // With auto-crop off the wording stays exactly as it was; the toggle's
+    // result is only reported when the user asked for automatic cropping.
+    const cropNote = !autoCropEnabled
+      ? ''
+      : croppedPage
+        ? ' Page detected and cropped.'
+        : ' No page edges found, so the full frame was saved.'
+
     setMessage({
       type: 'success',
-      text: wasRetake
+      text: (wasRetake
         ? 'Replacement captured — its details were kept.'
-        : `Capture ${updated.length} added to the queue. Position the next page and capture again.`
+        : `Capture ${updated.length} added to the queue. Position the next page and capture again.`) + cropNote
     })
   }
 
@@ -1689,10 +1715,11 @@ function ImportScanner({ user }: PageProps) {
                     {retakeIndex !== null ? 'Capture Replacement' : 'Capture Document'}
                   </button>
                   <p className="text-[11px] text-[#718096]">
-                    Each capture is added to the queue exactly as framed and the camera stays on —
-                    position the next page and capture again.{' '}
                     {autoCropEnabled
-                      ? 'Use Edit to detect the page edges and crop whenever you want.'
+                      ? 'Each capture is cropped automatically to the detected page and the camera stays on — position the next page and capture again.'
+                      : 'Each capture is added to the queue exactly as framed and the camera stays on — position the next page and capture again.'}{' '}
+                    {autoCropEnabled
+                      ? 'Use Edit whenever you want to adjust the crop.'
                       : 'You can still edit any capture manually below.'}
                   </p>
 
