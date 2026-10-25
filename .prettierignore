@@ -1,0 +1,9 @@
+node_modules/
+dist/
+release/
+public/scanner/
+Archive/
+archives/
+package-lock.json
+*.db
+*.md

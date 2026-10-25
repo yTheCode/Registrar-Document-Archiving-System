@@ -1,0 +1,19 @@
+{
+  "semi": false,
+  "singleQuote": true,
+  "trailingComma": "none",
+  "arrowParens": "avoid",
+  "printWidth": 120,
+  "tabWidth": 2,
+  "useTabs": false,
+  "bracketSpacing": true,
+  "endOfLine": "auto",
+  "overrides": [
+    {
+      "files": ["**/*.cjs"],
+      "options": {
+        "semi": true
+      }
+    }
+  ]
+}

@@ -74,6 +74,28 @@ Per hard rule 1 these are recorded only — NOT fixed during the refactor.
   the ceiling option was skipped, so the label and the option are not the same thing.
   Recorded only — behavior depends on the camera's startup mode, and no camera is
   attached here to reproduce it.
+- **Hooks run after an early `return` in three pages.** `src/pages/Settings.tsx:14`,
+  `src/pages/ActivityLog.tsx:14` and
+  `src/features/import-scanner/components/ImportScannerPage.tsx:52` all answer
+  `if (user.role !== 'admin') { return <AccessRestricted/> }` *before* declaring their
+  `useState`/`useEffect`/`useToast` calls, so the hook order changes between renders if
+  the role ever changes while the component stays mounted. It works today because the
+  role is fixed for the session. Found by ESLint in Phase 6-1 (100
+  `react-hooks/rules-of-hooks` warnings: 62 + 31 + 7). Recorded only — fixing it means
+  moving the guard below the hooks, which is a behavior change.
+- **Two silently swallowed errors** (`no-empty`): `electron/ipc/files.ipc.cjs:295`
+  `try { fs.rmSync(chosenPath, { force: true }) } catch {}` — best-effort cleanup, so a
+  failed rollback is invisible; `src/components/DocumentViewerModal.tsx:198`
+  `try { metadata = ... JSON.parse(...) } catch {}` — invalid `metadata_json` silently
+  becomes `{}`. Both contradict hard rule 8, but adding reporting would change behavior.
+- **Unused destructured IPC parameters** (`no-unused-vars`): `documentTypeId` at
+  `electron/ipc/folders.ipc.cjs:11` and `fileName` at `electron/ipc/images.ipc.cjs:11`
+  are pulled out of the handler payload and never read — either dead wiring or a handler
+  that ignores part of its input. Recorded, not investigated (Phase 6 is tooling only).
+- **Stale lint suppression.** `src/components/ImageEditor.tsx:315` still carries
+  `// eslint-disable-next-line react-hooks/exhaustive-deps` over a `[dragCorner]`
+  dependency array that now reports nothing, so ESLint flags the directive itself
+  (the one `--fix`-able warning in the repo).
 - (other findings will be appended as phases progress)
 
 ## Phase 1a — dependency map for `electron/main.cjs` (2,838 lines, 46 IPC handlers)
@@ -800,6 +822,83 @@ are unaffected. No camera state, effect or handler moved; no `useCallback`/`useM
 
 Verified: typecheck PASS, build PASS, CSS hash unchanged (`index-BVwFChkt.css`, 47.46 kB),
 JS 410.82 → 411.73 kB (+0.91 kB).
+
+## 11. Phase 6-lite — dev tooling (branch `refactor/phase-6`)
+
+Owner scope: ESLint + Prettier + Vitest only, **no application source change**, one
+checkpoint per commit.
+
+Layout rules agreed up front: every test file lives under a top-level `tests/`
+(`tests/features/...`, `tests/utils/...`, `tests/electron/...`) — never inside `src/`
+and never inside `electron/` (that tree is packaged into the app); `lint`, `format` and
+`test` are standalone scripts and are NOT added to `build` or `typecheck`.
+
+### 11.1 6-1 — toolchain + minimal configs
+
+Added: `eslint.config.mjs`, `.prettierrc.json`, `.prettierignore`, `vitest.config.ts`;
+`package.json` gained `lint` / `format` / `test` plus devDependencies
+(eslint 9.39.5, @eslint/js 9.39.5, typescript-eslint 8.72.0, eslint-plugin-react-hooks
+5.2.0, eslint-plugin-react-refresh 0.4.26, globals 15.15.0, prettier 3.9.10,
+vitest 2.1.9 — Vitest pinned to ^2 because Vite 5 is the installed peer; ^3 would want
+Vite 6/7).
+
+**ESLint.** Flat config, every inherited severity downgraded to `warn` by a
+`toWarnings()` map (severities already `off` are kept, because those are the
+typescript-eslint overrides that switch off core rules it replaces). No rule reports as
+`error`, so `npm run lint` exits 0 even with 112 warnings and can never fail a build.
+Ignores: `**/node_modules/**`, `dist/**`, `release/**`, `public/**` (holds the huge
+`opencv.js`), `Archive/**`, `archives/**`, `*.cmd`. The typescript-eslint blocks are
+pinned to `**/*.{ts,tsx,mts,cts}` so `electron/*.cjs` keeps espree with
+`sourceType: 'commonjs'` + Node globals; that pattern also covers
+`electron/preload.js`, a plain `.js` file full of `require` calls which must stay
+untouched and single-file. `react-hooks` / `react-refresh` apply to `src/**` only;
+`scripts/**/*.mjs`, the two vite/vitest configs and `tests/**` get Node globals.
+Two of the reported warnings are intentional code, not defects: `no-control-regex` at
+`electron/services/folderNaming.cjs:100` (stripping `\x00-\x1f` *is* the sanitizer) and
+`react-refresh/only-export-components` at `src/components/ui/Toast.tsx:92` (HMR-only
+concern).
+
+**Prettier.** Options were set from the existing renderer style: `semi: false`,
+`singleQuote: true`, `trailingComma: "none"`, `arrowParens: "avoid"`,
+`printWidth: 120`, `endOfLine: "auto"`.
+- `endOfLine: "auto"` is required: `core.autocrlf=true` makes every tracked file CRLF in
+  the working tree, and the default `"lf"` would rewrite the entire repo.
+- `overrides: **/*.cjs → semi: true`, because all electron CJS files use semicolons
+  (24/24 with, 0 without) while the renderer uses none — one style setting cannot match
+  both trees.
+- `prettier-plugin-tailwindcss` deliberately NOT installed: it sorts class lists, which
+  would rewrite markup in every component (hard rule 2).
+- Reality check: `prettier --check .` reports 73 files, and the number barely moves with
+  width (73 @120, 75 @160, 76 @240). The remaining gap is Prettier's structural
+  re-wrapping (multi-line `style={{ … }}` objects, chained calls), not quotes/semis.
+  So `npm run format` (`prettier --write .`) is a whole-repo rewrite and MUST NOT be run
+  — format one file at a time. `*.md` and `package-lock.json` are in `.prettierignore`
+  for the same reason (table/list reflow).
+- `vite.config.ts` and `tsconfig.node.json` do use trailing commas, so those two configs
+  are already reported as unformatted by the `trailingComma: "none"` choice. Left alone.
+
+**Vitest.** A separate `vitest.config.ts` instead of a `test:` block in `vite.config.ts`
+so the vite config stays untouched; it repeats the `@ → ./src` alias the same way
+(`path.resolve(__dirname, './src')`). `environment: 'node'` (6-2/6-3 test pure TS plus
+one CJS service — no DOM), `include: tests/**/*.{test,spec}.{ts,tsx}`, and
+`"test": "vitest run --passWithNoTests"` so the script already works before 6-2 exists.
+`tests/` is intentionally NOT added to `tsconfig.json` (`include: ["src"]`): widening it
+would change what the `build` script's `tsc` pass compiles. Consequence, and the one
+uncertain spot of this checkpoint: test files are not type-checked by `npm run typecheck`
+— the clean fix later is a `tsconfig.test.json` + its own script, not a wider `include`.
+
+Verified at 6-1 (nothing under `src/`, `electron/`, `public/`, `index.html` or `scripts/`
+was modified):
+- `npm run lint` → 93 files (38 tsx, 24 ts, 27 cjs, 2 mjs, 1 js), **0 errors,
+  112 warnings**, exit 0.
+- `npm run typecheck` → PASS, exit 0.
+- `npm run build` → PASS; `index-BVwFChkt.css` 47.46 kB (same hash as 3b-2..3b-5) and
+  `index-CRAdrw2B.js` 411.73 kB (identical to the 3b-5 output).
+- `npm test` → exit 0 ("No test files found"), alias config loaded.
+- The renderer dev path still works: a throwaway `vite --port 5199` booted and answered
+  HTTP 200 on `/` and on `/src/utils/format.ts` (stopped afterwards). Electron itself was
+  NOT launched from here — `npm run dev` opens a window, so the owner should confirm the
+  app start once.
 
 ## After the defense
 
