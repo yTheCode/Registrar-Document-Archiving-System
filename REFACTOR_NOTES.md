@@ -60,6 +60,20 @@ Per hard rule 1 these are recorded only — NOT fixed during the refactor.
   app; flagging, not changing.
 - `users:getAll` counts the *whole* `users` table for `total` but the proposed
   layout keeps it as-is; no bug, just noting the count ignores any future filter.
+- **`Native Max` quality option is intermittent and can be an unreachable mode.**
+  In `src/utils/cameraCapabilities.ts`, the extra ceiling option is only added when
+  `plausibleNative && beatsPresets` passes (64-66), and `plausibleNative` is
+  `aspectGap <= 0.3 && areaGap <= 3` (61) — both measured against the *current*
+  settings from `track.getSettings()`. So whether the option appears at all depends
+  on the mode the camera happens to start in, not on the hardware's real ceiling.
+  Worse, `maxWidth`/`maxHeight` are independent per-axis maxima, so they can combine
+  into a size no real mode satisfies (e.g. `1280 x 1920` on a camera whose actual
+  top mode is `1920 x 1080`); picking it makes the driver refuse
+  `applyCameraQuality`, and the user sees the "…is not available on this camera"
+  error path. Related: lines 67-69 stamp `[Native Max]` onto `options[0]` even when
+  the ceiling option was skipped, so the label and the option are not the same thing.
+  Recorded only — behavior depends on the camera's startup mode, and no camera is
+  attached here to reproduce it.
 - (other findings will be appended as phases progress)
 
 ## Phase 1a — dependency map for `electron/main.cjs` (2,838 lines, 46 IPC handlers)
@@ -632,3 +646,35 @@ Verified: typecheck PASS, build PASS, CSS hash unchanged from 3b-0
   and rule 7), not during them.
 - `editableIndices` was not extracted: one 3-line site inside
   `handleEditAllImages`.
+
+### Feature port — auto-crop on capture
+
+**auto-crop on capture (`04cba01`) was merged from main and ported into
+`ImportScannerPage.tsx`; it is a deliberate behavior change outside the refactor.**
+The merge (`cea6d22`) landed `04cba01`'s edit on `src/pages/ImportScanner.tsx`, which
+on this branch is the one-line re-export shim, so the feature code had to be replayed
+onto the real page. Method: `git show 04cba01` piped through a `sed` path rewrite, then
+`git apply` — the patch applied with only line offsets (−75/−77), and the resulting
+change set was diffed against the original hunk-by-hunk to confirm it is byte-identical
+(38 insertions / 11 deletions on both sides). src/pages/ImportScanner.tsx stays the
+one-line shim. The Global "behavior must not change" rule is therefore lifted for
+`handleCapturePhoto` and its two strings ONLY — everything else on this branch is still
+a pure refactor.
+
+## After the defense
+
+Follow-ups deliberately deferred until the defense pass is finished.
+
+1. **Merge the two student-search components** (`SessionStudentPicker` and
+   `DocumentStudentField`) into one parameterized component. They are near-duplicates
+   moved verbatim in 3b-3; the full list of differences to reconcile — props, pick
+   handlers, result caps (8 vs 5), input size (`h-10`/`text-sm` vs `h-9`/`text-xs`),
+   `autoFocus`, `max-h-64` vs `max-h-48`, the required-star label, and the
+   `currentStudent` badge quirk — is recorded under "Dedupe later" in §9.
+2. **`buildStudentSearchFilter` — already in the right place, nothing to move.**
+   It lives at `electron/services/studentQueries.cjs:11`, is exported at line 76, and is
+   the sole import of `electron/ipc/documents.ipc.cjs:7`; `electron/services/authz.cjs`
+   exports only `isAdmin`. The stale claim that it sits in `authz.cjs` comes from the
+   §7 Phase-1b layout table ("`services/authz.cjs` isAdmin, buildStudentSearchFilter")
+   and from the §1/§2 dependency maps drawn in Phase 1a, before the split was executed.
+   Correcting §7 is a documentation fix, not a code move.
