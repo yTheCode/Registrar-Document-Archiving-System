@@ -703,6 +703,44 @@ Verified: typecheck PASS, build PASS, CSS hash unchanged from 3b-1 (`index-BVwFC
 47.46 kB) so no class delta; JS 407.34 → 408.90 kB (+1.56 kB = ten module wrappers plus
 the prop plumbing).
 
+### 3b-3 — student search components + add-student modal (approved 3a)
+
+Created `SessionStudentPicker.tsx` (97 lines), `DocumentStudentField.tsx` (113) and
+`AddStudentModal.tsx` (180). Page: 1,932 → 1,643 lines (34 insertions / 323 deletions).
+`SessionStudentPicker` is the page's old `renderStudentSearch` closure — its `onPick`
+parameter kept the same name, so that body moved with **zero** rewrites and the call
+site simply passes `onPick={handlePickBatchStudent}`.
+
+**§9 #3 honoured:** the two searches were NOT merged. Asserted after the move — the
+picker still has `autoFocus`, `h-10`, `text-sm`, `slice(0, 8)`, `max-h-64` and no field
+label; the field still has `h-9`, `text-xs`, `slice(0, 5)`, `max-h-48` and the
+required-star label and still no `autoFocus`. Differences remain listed for the
+after-the-defense merge.
+
+**Nothing became page-less state:** `searchTerm`, `currentStudent`, `showAddStudentForm`,
+`newStudentForm`, `pendingForceAdd`, `addStudentMessage`, `isAddingStudent`,
+`currentDocType`, `studentRequiredForCurrent` and the `filterStudents` call all stay in
+the page; components only receive them. Props that carry page state or its setters keep
+their exact page names so the moved JSX stays byte-identical; only page callbacks became
+`on*` props (`handlePickCurrentStudent`→`onPickCurrentStudent`,
+`handleCreateStudent`→`onCreate`, `closeAddStudentForm`→`onClose`).
+`DocumentStudentField` wraps the moved `{studentRequiredForCurrent ? … : currentDocType && …}`
+expression in a fragment so it moves verbatim; the `<>…</>` the page had around that one
+expression was dropped, which renders the same DOM.
+
+Page imports freed by the move: `User`, `Search as SearchIcon`, `X`, `UserPlus`
+(`noUnusedLocals` confirms none of them is still referenced).
+
+**Traps caught:** my first extraction range for the modal ran one line too far and ate
+its closing `)}` (TS1128 at AddStudentModal.tsx:178) — rebuilt from `git show HEAD:…`
+with the correct 1759–1908 range; the same range also swallowed the blank line before
+`{confirmDialog && (}`, restored in the page.
+
+Verified: typecheck PASS, build PASS, CSS hash unchanged (`index-BVwFChkt.css`, 47.46 kB)
+so no class delta; JS 408.90 → 410.16 kB (+1.26 kB = three module wrappers plus props).
+Still in the page: the camera section (3b-5) and DocumentNavCard + DocumentDetailsForm
+(3b-4).
+
 ## After the defense
 
 Follow-ups deliberately deferred until the defense pass is finished.

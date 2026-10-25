@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
-import { Camera, FileText, User, Search as SearchIcon, X, AlertCircle, UserPlus } from 'lucide-react'
+import { Camera, FileText, AlertCircle } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import { formatStudentYear } from '@/utils/format'
 import ConfirmDialog from '@/components/ConfirmDialog'
@@ -28,12 +28,15 @@ import { filterStudents, studentIdFromSearchTerm } from '@/features/import-scann
 import { describeCameraError } from '@/features/import-scanner/lib/cameraErrors'
 import { drawLiveOutline } from '@/features/import-scanner/lib/liveOutline'
 import AccessRestricted from '@/features/import-scanner/components/AccessRestricted'
+import AddStudentModal from '@/features/import-scanner/components/AddStudentModal'
 import BatchResultsList from '@/features/import-scanner/components/BatchResultsList'
+import DocumentStudentField from '@/features/import-scanner/components/DocumentStudentField'
 import ImageEditorModal from '@/features/import-scanner/components/ImageEditorModal'
 import ImportActionBar from '@/features/import-scanner/components/ImportActionBar'
 import ReviewTable from '@/features/import-scanner/components/ReviewTable'
 import SavingOverlay from '@/features/import-scanner/components/SavingOverlay'
 import ScannedQueue from '@/features/import-scanner/components/ScannedQueue'
+import SessionStudentPicker from '@/features/import-scanner/components/SessionStudentPicker'
 import StepFileAcquisition from '@/features/import-scanner/components/StepFileAcquisition'
 import WorkflowBanner from '@/features/import-scanner/components/WorkflowBanner'
 import WorkflowPicker from '@/features/import-scanner/components/WorkflowPicker'
@@ -1184,86 +1187,6 @@ function ImportScanner({ user }: PageProps) {
     })
   }
 
-  const renderStudentSearch = (onPick: (s: Student) => void) => (
-    <div>
-      {/* Show search bar OR selected student badge */}
-      {currentStudent ? (
-        <div className="mb-3 flex items-center gap-2 rounded-md border border-[#c5dff4] bg-[#eef5fb] px-4 py-2.5">
-          <User size={16} className="shrink-0 text-[#24558d]" />
-          <div className="flex-1 min-w-0">
-            <div className="text-sm font-bold text-[#182a43] truncate">
-              {currentStudent.last_name}, {currentStudent.first_name}
-            </div>
-            <div className="mono text-[10px] text-[#536d89]">
-              {formatStudentYear(currentStudent)}
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              setCurrentStudent(null)
-              setSearchTerm('')
-            }}
-            className="shrink-0 rounded p-1 text-[#536d89] hover:bg-[#dceafb] hover:text-[#182a43] transition"
-            title="Clear selection"
-          >
-            <X size={16} />
-          </button>
-        </div>
-      ) : (
-        <>
-          <div className="relative mb-3">
-            <SearchIcon size={15} className="absolute left-3 top-2.5 text-[#8a97a7]" />
-            <input
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Search by name, school year, or student ID..."
-              autoFocus
-              className="h-10 w-full rounded-md border border-[#d9dfe7] bg-white pl-9 pr-3 text-sm outline-none focus:border-[#5688bd] focus:ring-2 focus:ring-[#dceafb]"
-            />
-          </div>
-          {searchTerm && (
-            <div className="max-h-64 overflow-y-auto rounded-md border border-[#d9dfe7]">
-              {filteredStudents.length > 0 ? (
-                filteredStudents.slice(0, 8).map(student => (
-                  <button
-                    key={student.id}
-                    type="button"
-                    onClick={() => {
-                      onPick(student)
-                      setSearchTerm('')
-                    }}
-                    className="w-full px-3 py-2 text-left hover:bg-[#f8fafc] border-b border-[#edf0f3] last:border-0"
-                  >
-                    <div className="text-sm font-bold text-[#263950]">
-                      {student.last_name}, {student.first_name}
-                    </div>
-                    <div className="mono mt-0.5 text-[10px] text-[#8995a4]">
-                      {formatStudentYear(student)}
-                    </div>
-                  </button>
-                ))
-              ) : (
-                <div className="p-3 text-center">
-                  <div className="text-xs text-[#8a95a5]">No students found for "{searchTerm}"</div>
-                  <button
-                    type="button"
-                    onClick={() => openAddStudentForm(onPick)}
-                    className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-[#d7dde5] bg-white px-3 py-1.5 text-xs font-bold text-[#24558d] transition hover:bg-[#eef5fb]"
-                  >
-                    <UserPlus size={14} />
-                    Add New Student
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-        </>
-      )}
-    </div>
-  )
-
   return (
     <div className="mx-auto max-w-[1420px] p-5 sm:p-7">
       <PageHeader
@@ -1309,7 +1232,15 @@ function ImportScanner({ user }: PageProps) {
               ? `Choosing a different student will assign all ${filesWithMetadata.length} document(s) in this batch to them.`
               : 'All documents added in this session will be archived under this student.'}
           </p>
-          {renderStudentSearch(handlePickBatchStudent)}
+          <SessionStudentPicker
+            onPick={handlePickBatchStudent}
+            currentStudent={currentStudent}
+            setCurrentStudent={setCurrentStudent}
+            searchTerm={searchTerm}
+            setSearchTerm={setSearchTerm}
+            filteredStudents={filteredStudents}
+            openAddStudentForm={openAddStudentForm}
+          />
         </div>
       )}
 
@@ -1592,97 +1523,17 @@ function ImportScanner({ user }: PageProps) {
 
             {/* Student selection — mixed-batch workflows, only when doc type requires it */}
             {!isStudentWorkflow && (
-              <>
-                {studentRequiredForCurrent ? (
-                  <div>
-                    <label className="label-caps mb-1.5 block">
-                      Student <span className="text-[#b94843]">*</span>
-                    </label>
-
-                    {currentStudent ? (
-                      <div className="flex items-center gap-2 rounded-md border border-[#c5dff4] bg-[#eef5fb] px-3 py-2.5">
-                        <User size={16} className="shrink-0 text-[#24558d]" />
-                        <div className="flex-1 min-w-0">
-                          <div className="text-xs font-bold text-[#182a43] truncate">
-                            {currentStudent.last_name}, {currentStudent.first_name}
-                          </div>
-                          <div className="mono text-[10px] text-[#536d89]">
-                            {formatStudentYear(currentStudent)}
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setCurrentStudent(null)
-                            setSearchTerm('')
-                          }}
-                          className="shrink-0 rounded p-1 text-[#536d89] hover:bg-[#dceafb] hover:text-[#182a43] transition"
-                          title="Clear selection"
-                        >
-                          <X size={16} />
-                        </button>
-                      </div>
-                    ) : (
-                      <>
-                        <div className="relative mb-2">
-                          <SearchIcon size={15} className="absolute left-3 top-2.5 text-[#8a97a7]" />
-                          <input
-                            type="text"
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                            placeholder="Search students..."
-                            className="h-9 w-full rounded-md border border-[#d9dfe7] bg-white pl-9 pr-3 text-xs outline-none focus:border-[#5688bd] focus:ring-2 focus:ring-[#dceafb]"
-                          />
-                        </div>
-
-                        {searchTerm && (
-                          <div className="max-h-48 overflow-y-auto rounded-md border border-[#d9dfe7]">
-                            {filteredStudents.length > 0 ? (
-                              filteredStudents.slice(0, 5).map(student => (
-                                <button
-                                  key={student.id}
-                                  type="button"
-                                  onClick={() => {
-                                    setCurrentStudent(student)
-                                    setSearchTerm('')
-                                  }}
-                                  className="w-full px-3 py-2 text-left hover:bg-[#f8fafc] border-b border-[#edf0f3] last:border-0"
-                                >
-                                  <div className="text-xs font-bold text-[#263950]">
-                                    {student.last_name}, {student.first_name}
-                                  </div>
-                                  <div className="mono mt-0.5 text-[10px] text-[#8995a4]">
-                                    {formatStudentYear(student)}
-                                  </div>
-                                </button>
-                              ))
-                            ) : (
-                              <div className="p-3 text-center">
-                                <div className="text-xs text-[#8a95a5]">No students found for "{searchTerm}"</div>
-                                <button
-                                  type="button"
-                                  onClick={() => openAddStudentForm(handlePickCurrentStudent)}
-                                  className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-[#d7dde5] bg-white px-3 py-1.5 text-xs font-bold text-[#24558d] transition hover:bg-[#eef5fb]"
-                                >
-                                  <UserPlus size={14} />
-                                  Add New Student
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </>
-                    )}
-                  </div>
-                ) : currentDocType && (
-                  <div className="flex items-center gap-2 p-3 rounded-md bg-[#f1f4f7] border border-[#e1e5ea]">
-                    <X size={14} className="text-[#8a95a5]" />
-                    <div className="flex-1 text-xs text-[#536d89]">
-                      <span className="font-bold">Not Student-Specific</span> — this document type doesn't require a student.
-                    </div>
-                  </div>
-                )}
-              </>
+              <DocumentStudentField
+                studentRequiredForCurrent={studentRequiredForCurrent}
+                currentDocType={currentDocType}
+                currentStudent={currentStudent}
+                setCurrentStudent={setCurrentStudent}
+                searchTerm={searchTerm}
+                setSearchTerm={setSearchTerm}
+                filteredStudents={filteredStudents}
+                openAddStudentForm={openAddStudentForm}
+                onPickCurrentStudent={handlePickCurrentStudent}
+              />
             )}
 
             {/* Document Type */}
@@ -1756,156 +1607,16 @@ function ImportScanner({ user }: PageProps) {
 
       {/* Add New Student Modal — opened from a student search with no matches */}
       {showAddStudentForm && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-          onClick={closeAddStudentForm}
-        >
-          <div
-            className="w-full max-w-lg rounded-lg bg-white p-6 shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="mb-5 flex items-center justify-between">
-              <h3 className="text-base font-bold text-[#182a43]">Add New Student</h3>
-              <button
-                type="button"
-                onClick={closeAddStudentForm}
-                className="rounded p-1 text-[#617084] transition hover:bg-[#f4f6f8]"
-                title="Close"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            {addStudentMessage.text && (
-              <div className={cn(
-                'mb-4 rounded-md px-3 py-2 text-xs',
-                addStudentMessage.type === 'error' && 'bg-[#fff0ef] text-[#b94843]'
-              )}>
-                {addStudentMessage.text}
-                {pendingForceAdd && (
-                  <div className="mt-2 flex gap-2">
-                    <button
-                      type="submit"
-                      disabled={isAddingStudent}
-                      className="rounded border border-[#b94843] px-2.5 py-1 text-[10px] font-bold text-[#b94843] hover:bg-[#b94843] hover:text-white transition disabled:opacity-50"
-                    >
-                      Add anyway?
-                    </button>
-                    <button
-                      type="button"
-                      onClick={closeAddStudentForm}
-                      className="rounded border border-[#d7dde5] bg-white px-2.5 py-1 text-[10px] font-bold text-[#34445a] hover:bg-[#f4f6f8] transition"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-
-            <form onSubmit={handleCreateStudent} className="space-y-4">
-              <div>
-                <label className="label-caps mb-1.5 block">Student ID</label>
-                <input
-                  type="text"
-                  value={newStudentForm.student_id}
-                  onChange={(e) => { setPendingForceAdd(false); setNewStudentForm({ ...newStudentForm, student_id: e.target.value }) }}
-                  placeholder="Optional"
-                  className="h-10 w-full rounded-md border border-[#d9dfe7] bg-white px-3 text-sm text-[#1f2e43] placeholder:text-[#a4adba] outline-none transition focus:border-[#5688bd] focus:ring-2 focus:ring-[#dceafb]"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="label-caps mb-1.5 block">
-                    First Name <span className="text-[#b94843]">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={newStudentForm.first_name}
-                    onChange={(e) => { setPendingForceAdd(false); setNewStudentForm({ ...newStudentForm, first_name: e.target.value }) }}
-                    required
-                    className="h-10 w-full rounded-md border border-[#d9dfe7] bg-white px-3 text-sm text-[#1f2e43] placeholder:text-[#a4adba] outline-none transition focus:border-[#5688bd] focus:ring-2 focus:ring-[#dceafb]"
-                  />
-                </div>
-                <div>
-                  <label className="label-caps mb-1.5 block">
-                    Last Name <span className="text-[#b94843]">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={newStudentForm.last_name}
-                    onChange={(e) => { setPendingForceAdd(false); setNewStudentForm({ ...newStudentForm, last_name: e.target.value }) }}
-                    required
-                    className="h-10 w-full rounded-md border border-[#d9dfe7] bg-white px-3 text-sm text-[#1f2e43] placeholder:text-[#a4adba] outline-none transition focus:border-[#5688bd] focus:ring-2 focus:ring-[#dceafb]"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="label-caps mb-1.5 block">Middle Name</label>
-                <input
-                  type="text"
-                  value={newStudentForm.middle_name}
-                  onChange={(e) => { setPendingForceAdd(false); setNewStudentForm({ ...newStudentForm, middle_name: e.target.value }) }}
-                  placeholder="Optional"
-                  className="h-10 w-full rounded-md border border-[#d9dfe7] bg-white px-3 text-sm text-[#1f2e43] placeholder:text-[#a4adba] outline-none transition focus:border-[#5688bd] focus:ring-2 focus:ring-[#dceafb]"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="label-caps mb-1.5 block">
-                    School Year <span className="text-[#b94843]">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={newStudentForm.school_year}
-                    onChange={(e) => { setPendingForceAdd(false); setNewStudentForm({ ...newStudentForm, school_year: e.target.value }) }}
-                    required
-                    placeholder="e.g., 1996-1997"
-                    className="h-10 w-full rounded-md border border-[#d9dfe7] bg-white px-3 text-sm text-[#1f2e43] placeholder:text-[#a4adba] outline-none transition focus:border-[#5688bd] focus:ring-2 focus:ring-[#dceafb]"
-                  />
-                </div>
-                <div>
-                  <label className="label-caps mb-1.5 block">
-                    Program Level <span className="text-[#b94843]">*</span>
-                  </label>
-                  <select
-                    value={newStudentForm.program_level}
-                    onChange={(e) => { setPendingForceAdd(false); setNewStudentForm({ ...newStudentForm, program_level: e.target.value }) }}
-                    required
-                    className="h-10 w-full rounded-md border border-[#d9dfe7] bg-white px-3 text-sm text-[#1f2e43] outline-none transition focus:border-[#5688bd] focus:ring-2 focus:ring-[#dceafb]"
-                  >
-                    <option value="">Select...</option>
-                    <option value="College">College</option>
-                    <option value="Graduate School">Graduate School</option>
-                    <option value="Medicine">Medicine</option>
-                    <option value="Law">Law</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="flex gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={closeAddStudentForm}
-                  disabled={isAddingStudent}
-                  className="flex-1 inline-flex items-center justify-center gap-2 rounded-md px-3.5 py-2 text-xs font-bold transition focus-ring border border-[#d7dde5] bg-white text-[#34445a] hover:bg-[#f4f6f8] disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isAddingStudent}
-                  className="flex-1 inline-flex items-center justify-center gap-2 rounded-md px-3.5 py-2 text-xs font-bold transition focus-ring bg-[#24558d] text-white hover:bg-[#1d4778] disabled:opacity-50"
-                >
-                  {isAddingStudent ? 'Adding...' : pendingForceAdd ? 'Confirm Add' : 'Add Student'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+        <AddStudentModal
+          newStudentForm={newStudentForm}
+          setNewStudentForm={setNewStudentForm}
+          addStudentMessage={addStudentMessage}
+          pendingForceAdd={pendingForceAdd}
+          setPendingForceAdd={setPendingForceAdd}
+          isAddingStudent={isAddingStudent}
+          onCreate={handleCreateStudent}
+          onClose={closeAddStudentForm}
+        />
       )}
 
       {confirmDialog && (
