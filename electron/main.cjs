@@ -10,6 +10,13 @@ const { userDataPath, dbDir, dbPath, ELECTRON_DIR, PROJECT_ROOT, PRELOAD_PATH } 
 const { getMainWindow, setMainWindow } = require('./window.cjs');
 const { getDb, setDb, initializeDatabase, closeDatabase, registerDbFunctions } = require('./db/connection.cjs');
 const { runMigrations } = require('./db/migrations.cjs');
+const { isAdmin } = require('./services/authz.cjs');
+const { buildStudentSearchFilter, buildStudentPage, buildStudentListWhere } = require('./services/studentQueries.cjs');
+const { validateAndResolvePath, getArchiveRoot, resolveArchivePath, toArchiveRelative } = require('./services/archivePaths.cjs');
+const { PROGRAM_FOLDERS, buildStudentDocumentFileName, pickCollisionFreeFileName, computeDocumentTypeFolder } = require('./services/folderNaming.cjs');
+const { migrateDocumentTypeFolders, migrateToRelativePaths } = require('./services/archiveMigrations.cjs');
+const { isSafeArchiveTarget, resolveArchiveDir, inspectBackupDatabase, removeDatabaseSidecars } = require('./services/backup.cjs');
+const { sessionPickedFiles } = require('./services/pickedFiles.cjs');
 
 
 function createWindow() {
@@ -82,35 +89,6 @@ app.on('window-all-closed', () => {
 
 // ==================== IPC HANDLERS ====================
 
-// Helper function to check if user is admin
-async function isAdmin(userId) {
-  if (!userId) return false;
-  const user = getDb().prepare('SELECT role FROM users WHERE id = ?').get(userId);
-  return user && user.role === 'admin';
-}
-
-/**
- * Build a WHERE fragment for free-text student search, shared by
- * students:search and documents:search. The term is split on whitespace
- * (commas treated as separators) and every word must match (AND) at least one
- * of the student columns (OR). `tableAlias` is the table qualifier ('' for the
- * bare students table, 's' inside the documents join).
- */
-function buildStudentSearchFilter(term, tableAlias = '') {
-  const words = String(term).replace(/,/g, ' ').trim().split(/\s+/).filter(Boolean);
-  if (words.length === 0) return { clause: '', params: [] };
-
-  const columns = ['first_name', 'middle_name', 'last_name', 'student_id', 'school_year', 'program_level'];
-  const clause = words
-    .map(() => `(${columns.map(col => `${tableAlias ? tableAlias + '.' : ''}${col} LIKE ?`).join(' OR ')})`)
-    .join(' AND ');
-  const params = words.flatMap(word => {
-    const like = `%${word}%`;
-    return columns.map(() => like);
-  });
-  return { clause, params };
-}
-
 // Authentication
 ipcMain.handle('auth:login', async (event, { username, password }) => {
   try {
@@ -144,56 +122,6 @@ ipcMain.handle('auth:login', async (event, { username, password }) => {
 });
 
 // Students
-// Pagination + sorting are opt-in via `opts`; callers that omit them (e.g. the
-// ImportScanner student dropdown, which searches client-side) get every row.
-const STUDENT_SORT_COLUMNS = {
-  last_name: 'last_name',
-  first_name: 'first_name',
-  school_year: 'school_year',
-  program_level: 'program_level',
-  created_at: 'created_at'
-};
-
-function buildStudentPage(options = {}) {
-  const sortCol = STUDENT_SORT_COLUMNS[options.sortBy] || 'last_name';
-  const sortDir = String(options.sortDir).toLowerCase() === 'desc' ? 'DESC' : 'ASC';
-  const params = [];
-  let tail = ` ORDER BY ${sortCol} ${sortDir}, first_name ASC`;
-  if (Number.isFinite(options.limit) && options.limit > 0) {
-    tail += ` LIMIT ? OFFSET ?`;
-    params.push(Math.max(1, Math.floor(options.limit)), Math.max(0, Math.floor(options.offset || 0)));
-  }
-  return { tail, params };
-}
-
-/**
- * Build the WHERE fragment + params shared by students:getAll and
- * students:search. Soft-deleted rows are excluded unless options.deleted is set
- * (the recycle bin). Optional schoolYear / programLevel narrow the result, and
- * a free-text term is layered on through buildStudentSearchFilter.
- */
-function buildStudentListWhere(options = {}, term = null) {
-  const clauses = [options.deleted ? 'deleted_at IS NOT NULL' : 'deleted_at IS NULL'];
-  const params = [];
-
-  if (term !== null && String(term).trim()) {
-    const { clause, params: termParams } = buildStudentSearchFilter(term);
-    if (clause) {
-      clauses.push(clause);
-      params.push(...termParams);
-    }
-  }
-  if (options.schoolYear) {
-    clauses.push('school_year = ?');
-    params.push(options.schoolYear);
-  }
-  if (options.programLevel) {
-    clauses.push('program_level = ?');
-    params.push(options.programLevel);
-  }
-  return { where: `WHERE ${clauses.join(' AND ')}`, params };
-}
-
 ipcMain.handle('students:getAll', async (event, opts = {}) => {
   try {
     const { where, params } = buildStudentListWhere(opts);
@@ -974,7 +902,7 @@ ipcMain.handle('file:readAsBase64', async (event, filePath) => {
 // as base64. Unlike file:readAsBase64 this does NOT enforce archive containment:
 // pre-import uploads still live outside the archive and must be previewable and
 // editable before they are copied in. Only image mime types are returned.
-const sessionPickedFiles = new Set();
+
 
 function isForbiddenPickedPath(resolved) {
   const forbidden = [dbDir, dbPath, ELECTRON_DIR];
@@ -1578,56 +1506,6 @@ ipcMain.handle('dashboard:getStats', async () => {
 
 // ==================== IMAGE OPERATIONS ====================
 
-// Helper function to validate and resolve file paths safely
-function validateAndResolvePath(filePath, archiveRoot) {
-  try {
-    // Resolve to absolute paths
-    const resolvedPath = path.resolve(filePath);
-    const resolvedRoot = path.resolve(archiveRoot || app.getPath('documents'));
-    
-    // Check if the resolved path is within the archive root
-    const relativePath = path.relative(resolvedRoot, resolvedPath);
-    
-    // If relativePath starts with '..' or is absolute, it's outside the root
-    if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
-      return { valid: false, error: 'Path is outside archive directory' };
-    }
-    
-    return { valid: true, resolvedPath, resolvedRoot };
-  } catch (error) {
-    return { valid: false, error: error.message };
-  }
-}
-
-function getArchiveRoot() {
-  const archiveSetting = getDb().prepare('SELECT value FROM settings WHERE key = ?').get('archive_directory');
-  return archiveSetting?.value || path.join(app.getPath('documents'), 'ADZU_Archive');
-}
-
-// Stored document paths may be legacy absolute paths or archive-relative
-// paths (the current format). Resolve either form against the current
-// archive root; return null when the result would escape the root.
-function resolveArchivePath(storedPath) {
-  if (!storedPath || typeof storedPath !== 'string') return null;
-  const root = path.resolve(getArchiveRoot());
-  const resolved = path.isAbsolute(storedPath)
-    ? path.resolve(storedPath)
-    : path.resolve(root, storedPath);
-  const relative = path.relative(root, resolved);
-  if (relative.startsWith('..') || path.isAbsolute(relative)) return null;
-  return resolved;
-}
-
-// Inverse of resolveArchivePath for new writes: every path stored in the
-// database is kept relative to the archive root so the archive folder can be
-// moved or re-pointed without rewriting rows.
-function toArchiveRelative(absolutePath) {
-  const root = path.resolve(getArchiveRoot());
-  const relative = path.relative(root, path.resolve(absolutePath));
-  if (relative.startsWith('..') || path.isAbsolute(relative)) return null;
-  return relative;
-}
-
 ipcMain.handle('image:saveBase64', async (event, { base64Data, fileName, destPath }) => {
   try {
     // Get archive root from settings
@@ -1715,240 +1593,6 @@ ipcMain.handle('documents:createBatch', async (event, { documents, userId }) => 
 });
 
 // ==================== FOLDER PATH GENERATION ====================
-
-// Fixed archive layout (matches the office's physical structure):
-//   <ArchiveRoot>/<ProgramFolder>/<Letter>/<LASTNAME, Firstname M. (SY)>/
-// See item 2 of the spec. Program folder names are provisional pending
-// client confirmation; the PDF only documents "College Student Records".
-const PROGRAM_FOLDERS = {
-  College: 'College Student Records',
-  'Graduate School': 'Graduate Student Records',
-  Medicine: 'Medical Student Records',
-  Law: 'Law Student Records'
-};
-
-function sanitizeFolderName(name) {
-  return String(name).replace(/[\\/:*?"<>|]/g, '-').trim();
-}
-
-function buildStudentFolderName(student) {
-  const lastName = student.last_name.trim();
-  const firstName = student.first_name.trim();
-  const middleInitial = student.middle_name && student.middle_name.trim()
-    ? ` ${student.middle_name.trim()[0].toUpperCase()}.`
-    : '';
-  return sanitizeFolderName(`${lastName.toUpperCase()}, ${firstName}${middleInitial} (${student.school_year})`);
-}
-
-// Shared by folders:generatePath (renderer-supplied root) and
-// documents:update (configured root). Resolves the destination
-// document-type folder for a document, creating it, and returns
-// { ok: true, folderPath, studentDir? } or { ok: false, error }.
-function computeDocumentTypeFolder({ studentId, documentTypeName, archiveRoot }) {
-  const root = archiveRoot || getArchiveRoot();
-  const sanitizedType = sanitizeFolderName(documentTypeName || 'Uncategorized') || 'Uncategorized';
-
-  // General document (no student): <Root>/General Documents/<DocumentTypeName>/
-  if (!studentId) {
-    const folderPath = path.join(root, 'General Documents', sanitizedType);
-    fs.mkdirSync(folderPath, { recursive: true });
-    return { ok: true, folderPath };
-  }
-
-  const student = getDb().prepare('SELECT * FROM students WHERE id = ?').get(studentId);
-  if (!student) {
-    return { ok: false, error: 'Student not found.' };
-  }
-  if (!student.program_level) {
-    return { ok: false, error: `${student.first_name} ${student.last_name} has no Program Level set. Edit the student record first.` };
-  }
-  if (!student.school_year) {
-    return { ok: false, error: `${student.first_name} ${student.last_name} has no School Year set. Edit the student record first.` };
-  }
-
-  const programFolder = PROGRAM_FOLDERS[student.program_level];
-  if (!programFolder) {
-    return { ok: false, error: `Unknown program level: ${student.program_level}` };
-  }
-
-  const letter = (student.last_name.trim()[0] || '#').toUpperCase();
-  const studentDir = path.join(root, programFolder, letter, buildStudentFolderName(student));
-
-  // Every document type gets its own folder inside the student directory:
-  //   <StudentDir>/<DocumentTypeName>/<file>
-  const folderPath = path.join(studentDir, sanitizedType);
-  fs.mkdirSync(folderPath, { recursive: true });
-  return { ok: true, folderPath, studentDir };
-}
-
-// Generate a Windows-safe filename following the pattern:
-// LASTNAME, FIRSTNAME_DOCUMENT_TYPE_(COUNTER)
-// For student documents only. General documents use plain document type name.
-function buildStudentDocumentFileName(student, documentTypeName, ext, counter) {
-  // Normalize names and document type to uppercase
-  const lastName = student.last_name.trim().toUpperCase();
-  const firstName = student.first_name.trim().toUpperCase();
-  // Replace spaces in document type with underscores
-  const docType = documentTypeName.trim().toUpperCase().replace(/\s+/g, '_');
-  
-  // Clean extension
-  const cleanExt = String(ext || 'jpg').replace(/[^a-zA-Z0-9]/g, '');
-  
-  // Build base name
-  const baseName = `${lastName}, ${firstName}_${docType}`;
-  
-  // Add counter
-  const finalName = `${baseName}_(${counter}).${cleanExt}`;
-  
-  // Sanitize for Windows (remove invalid chars, trim trailing spaces/periods)
-  return sanitizeWindowsFileName(finalName);
-}
-
-// Sanitize filename for Windows filesystem restrictions
-function sanitizeWindowsFileName(name) {
-  // Replace invalid Windows filename characters with dash
-  let cleaned = name.replace(/[\\/:*?"<>|]/g, '-');
-  // Remove control characters
-  cleaned = cleaned.replace(/[\x00-\x1f\x80-\x9f]/g, '');
-  // Remove trailing spaces and periods (Windows doesn't allow these)
-  cleaned = cleaned.replace(/[\s.]+$/, '');
-  // Ensure filename is not empty
-  if (!cleaned || cleaned.trim().length === 0) {
-    cleaned = 'document';
-  }
-  // Check for reserved Windows names
-  const reservedNames = ['CON', 'PRN', 'AUX', 'NUL', 'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9', 'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9'];
-  const nameWithoutExt = cleaned.split('.')[0].toUpperCase();
-  if (reservedNames.includes(nameWithoutExt)) {
-    cleaned = `_${cleaned}`;
-  }
-  // Limit total path length (Windows MAX_PATH is 260, leave room for directory path)
-  if (cleaned.length > 200) {
-    const parts = cleaned.split('.');
-    const ext = parts.pop();
-    const base = parts.join('.').substring(0, 195);
-    cleaned = `${base}.${ext}`;
-  }
-  return cleaned;
-}
-
-// First candidate is the plain base name, then "(n)" suffixes. Scanning the
-// filesystem (not the database) skips files left by older versions whose
-// numbering started at "(2)", so names can never collide. startAt preserves
-// generatePath's numbering after a legacy-file promotion (plain name taken,
-// so the next candidate is "(2)").
-function pickCollisionFreeFileName(folderPath, baseName, ext, startAt = 0) {
-  const cleanExt = String(ext || 'dat').replace(/[^a-zA-Z0-9]/g, '');
-  let n = startAt;
-  for (;;) {
-    const candidate = n === 0
-      ? `${baseName}.${cleanExt}`
-      : `${baseName} (${n}).${cleanExt}`;
-    if (!fs.existsSync(path.join(folderPath, candidate))) {
-      return candidate;
-    }
-    n++;
-  }
-}
-
-// Startup migration: every student document must live inside its
-// document-type folder (see folders:generatePath). Older archives stored the
-// first file of a type flat in the student directory — move those into
-// <StudentDir>/<DocumentType>/ here and update the database to match.
-function migrateDocumentTypeFolders() {
-  try {
-    const archiveSetting = getDb().prepare('SELECT value FROM settings WHERE key = ?').get('archive_directory');
-    const archiveRoot = archiveSetting?.value || path.join(app.getPath('documents'), 'ADZU_Archive');
-
-    const docs = getDb().prepare(`
-      SELECT d.id, d.file_name, d.file_path, d.student_id,
-             s.first_name, s.last_name, s.middle_name, s.school_year, s.program_level,
-             dt.name AS document_type_name
-      FROM documents d
-      JOIN students s ON d.student_id = s.id
-      JOIN document_types dt ON d.document_type_id = dt.id
-      WHERE d.student_id IS NOT NULL
-      ORDER BY d.id
-    `).all();
-
-    let moved = 0;
-    let skipped = 0;
-
-    for (const doc of docs) {
-      try {
-        const programFolder = PROGRAM_FOLDERS[doc.program_level];
-        if (!programFolder || !doc.school_year) {
-          skipped++;
-          continue;
-        }
-
-        const letter = (doc.last_name.trim()[0] || '#').toUpperCase();
-        const studentDir = path.join(archiveRoot, programFolder, letter, buildStudentFolderName(doc));
-        const typeDir = path.join(studentDir, sanitizeFolderName(doc.document_type_name));
-
-        const currentPath = resolveArchivePath(doc.file_path);
-        if (!currentPath) {
-          skipped++; // stored path escapes the archive root — leave it alone
-          continue;
-        }
-        const currentDir = path.dirname(currentPath);
-        if (currentDir === typeDir) continue; // already organized
-        if (currentDir !== studentDir || !fs.existsSync(currentPath)) {
-          skipped++; // unexpected location or missing file — leave it alone
-          continue;
-        }
-
-        fs.mkdirSync(typeDir, { recursive: true });
-        const extMatch = doc.file_name.match(/\.([a-zA-Z0-9]+)$/);
-        const ext = extMatch ? extMatch[1] : 'dat';
-        let fileName = `${doc.document_type_name}.${ext}`;
-        let n = 1;
-        while (fs.existsSync(path.join(typeDir, fileName))) {
-          fileName = `${doc.document_type_name} (${n}).${ext}`;
-          n++;
-        }
-        const newPath = path.join(typeDir, fileName);
-        fs.renameSync(currentPath, newPath);
-        getDb().prepare('UPDATE documents SET file_name = ?, file_path = ?, updated_at = (strftime(\'%Y-%m-%dT%H:%M:%fZ\',\'now\')) WHERE id = ?')
-          .run(fileName, toArchiveRelative(newPath), doc.id);
-        moved++;
-      } catch (docErr) {
-        console.warn(`Document folder migration: skipped document ${doc.id} (${doc.file_name}): ${docErr.message}`);
-        skipped++;
-      }
-    }
-
-    if (moved > 0 || skipped > 0) {
-      console.log(`Document-type folder migration finished: ${moved} moved into document-type folders, ${skipped} left in place.`);
-    }
-  } catch (error) {
-    console.error('Document-type folder migration failed:', error);
-  }
-}
-
-// Startup migration: documents.file_path used to store absolute paths. Rows
-// still in that form are rewritten relative to the archive root (the readers
-// resolve either form, so this is a storage-format cleanup, not a fix for
-// broken links). Rows pointing outside the current root are left alone —
-// they become readable again if the root is re-pointed at their location.
-function migrateToRelativePaths() {
-  try {
-    const docs = getDb().prepare('SELECT id, file_path FROM documents').all();
-    let converted = 0;
-    for (const doc of docs) {
-      if (!doc.file_path || !path.isAbsolute(doc.file_path)) continue;
-      const relative = toArchiveRelative(doc.file_path);
-      if (!relative) continue;
-      getDb().prepare('UPDATE documents SET file_path = ? WHERE id = ?').run(relative, doc.id);
-      converted++;
-    }
-    if (converted > 0) {
-      console.log(`Relative-path migration finished: ${converted} document path(s) rewritten archive-relative.`);
-    }
-  } catch (error) {
-    console.error('Relative-path migration failed:', error);
-  }
-}
 
 ipcMain.handle('folders:generatePath', async (event, { studentId, documentTypeId, documentTypeName, archiveRoot, ext }) => {
   try {
@@ -2126,65 +1770,6 @@ ipcMain.handle('archive:checkIntegrity', async (event, { userId }) => {
 });
 
 // ==================== BACKUP & RESTORE ====================
-
-// Restoring reads the archive location out of a database that may have come
-// from another machine, then deletes that folder recursively — so never let it
-// name a path that could not legitimately be an archive root.
-function isSafeArchiveTarget(dir) {
-  const resolved = path.resolve(dir);
-  const forbidden = [
-    path.parse(resolved).root,
-    app.getPath('home'),
-    app.getPath('desktop'),
-    app.getPath('documents'),
-    app.getPath('userData'),
-    dbDir,
-    PROJECT_ROOT
-  ];
-  return !forbidden.some((p) => path.resolve(p) === resolved);
-}
-
-function resolveArchiveDir(handle) {
-  const row = handle.prepare('SELECT value FROM settings WHERE key = ?').get('archive_directory');
-  return row?.value || path.join(userDataPath, 'Archive');
-}
-
-// Prove the database inside a backup is a usable SQLite file with the tables
-// this app needs, and report where it expects documents to live. Called before
-// anything on disk is touched so a bad ZIP cannot destroy real data.
-function inspectBackupDatabase(filePath) {
-  let probe;
-  try {
-    probe = new Database(filePath, { readonly: true, fileMustExist: true });
-
-    const integrity = probe.pragma('integrity_check', { simple: true });
-    if (integrity !== 'ok') {
-      throw new Error(`integrity_check reported "${integrity}"`);
-    }
-
-    const tables = probe.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((r) => r.name);
-    const missing = ['users', 'students', 'documents', 'document_types', 'settings'].filter((t) => !tables.includes(t));
-    if (missing.length > 0) {
-      throw new Error(`missing required table(s): ${missing.join(', ')}`);
-    }
-
-    return resolveArchiveDir(probe);
-  } catch (error) {
-    throw new Error(`Invalid backup — ${error.message}`);
-  } finally {
-    if (probe) {
-      probe.close();
-    }
-  }
-}
-
-function removeDatabaseSidecars(targetPath) {
-  // Journal/WAL files belong to the database being replaced; leaving them
-  // beside a new file would roll the replacement back or corrupt it.
-  for (const suffix of ['-journal', '-wal', '-shm']) {
-    fs.rmSync(targetPath + suffix, { force: true });
-  }
-}
 
 ipcMain.handle('backup:create', async (event, userId) => {
   if (!await isAdmin(userId)) {
