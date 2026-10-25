@@ -982,6 +982,53 @@ warnings). `tests/` is still outside `tsconfig.json`, so `npm run typecheck` doe
 it; it was checked once with a throwaway config (`tsc -p` over `tests/**/*.ts` + the app
 types, exit 0) and that config was deleted — see "After the defense" item 4.
 
+### 11.4 6-3 — electron CJS services: both targets SKIPPED (recorded, not forced)
+
+**No tests were added for `folderNaming.cjs` or `archivePaths.cjs`.** Neither can be
+imported by a test, and the checkpoint's rule is to skip and record rather than touch
+application code or patch the module loader.
+
+Evidence, collected with a throwaway probe (deleted; nothing under `electron/` changed):
+
+1. `require('electron/services/folderNaming.cjs')` in plain Node → `TypeError: Cannot read
+   properties of undefined (reading 'getPath')`. Same for `archivePaths.cjs`.
+2. The cause is import-time, not call-time: `electron/paths.cjs:12` runs
+   `app.getPath('userData')` at module scope (and lines 14-22 then `mkdir` the database
+   folder and copy a legacy `.db`). Outside Electron, `require('electron')` resolves to the
+   binary-path string, so `app` is `undefined`. `db/connection.cjs:8` requires `paths.cjs`,
+   `folderNaming.cjs:4` requires `connection.cjs`, and `archivePaths.cjs:5` requires both
+   `electron` and `connection.cjs`.
+3. A Vitest probe with `vi.mock('electron', …)` plus `vi.mock()` on both dependencies
+   reproduced the identical failure — while a `vi.mock()` of `archivePaths.cjs` *was*
+   honored for the test's own `import()`. So the mocks register for the ESM graph but do
+   not reach the `require()` calls inside these externalized `.cjs` files, exactly as the
+   checkpoint warned. Making it work needs a `require.cache`/`Module._load` patch (forbidden
+   here) or the `electron` npm package resolving to a stub — and even then `paths.cjs` would
+   create directories and copy the real database during collection.
+
+**Loadability survey (all 27 tracked `electron/**/*.cjs`, plain Node require):**
+- 22 BLOCKED on the `app.getPath` import-time chain — `main.cjs` and `paths.cjs` itself,
+  every `ipc/*.ipc.cjs` (14), `db/connection.cjs`, and
+  `services/{archiveMigrations,archivePaths,authz,backup,folderNaming}.cjs`.
+  `ipc/dialogs.ipc.cjs` is the exception that fails on `ipcMain.handle` instead.
+- 5 LOAD CLEANLY: `db/migrations.cjs`, `ipc/index.cjs`, `electron/window.cjs`,
+  `services/pickedFiles.cjs`, `services/studentQueries.cjs`. That last one already holds a
+  pure function (`buildStudentSearchFilter`) and is the obvious place to start if the owner
+  wants electron-side coverage in this phase — it was not added because 6-3 named only the
+  two services above.
+
+Consequences to note rather than fix: the sanitizing rules
+(`sanitizeFolderName`, `sanitizeWindowsFileName` — reserved names, trailing
+space/period stripping, the 200-char cap, the `\x00-\x1f` strip that ESLint flags as
+`no-control-regex`), the `LASTNAME, FIRSTNAME (SY)` folder format, and
+`validateAndResolvePath`'s traversal rejection are therefore **not** covered by any test.
+`validateAndResolvePath` is also untestable via a mock because its `archiveRoot` fallback
+reads `app.getPath('documents')` — the function itself takes the root as an argument, so it
+would test cleanly *if* the module could load; see "After the defense" item 7.
+
+Verified at 6-3: `npm test` → still 8 files / 88 tests PASS (no new suite) · typecheck PASS ·
+build PASS (hashes unchanged) · lint → 0 errors, 112 warnings.
+
 ## After the defense
 
 Follow-ups deliberately deferred until the defense pass is finished.
@@ -1024,3 +1071,25 @@ Follow-ups deliberately deferred until the defense pass is finished.
    means moving each `if (user.role !== 'admin') return` guard below the hook block.
 6. **`liveOutline.ts` has no tests** — it needs a canvas, so it was out of the pure-TS
    scope of 6-2. A jsdom/happy-dom environment would be the prerequisite.
+7. **Make the archive-naming rules testable (its own reviewed change, not a tooling step).**
+   §11.4 shows why `folderNaming.cjs` and `archivePaths.cjs` cannot be imported today. Ranked
+   by blast radius:
+   a. Move the pure helpers out of the require chain —
+      `sanitizeFolderName`, `sanitizeWindowsFileName`, `buildStudentFolderName`,
+      `buildStudentDocumentFileName` and `PROGRAM_FOLDERS` need neither `db` nor `electron`,
+      and `validateAndResolvePath` only needs `app` for its `archiveRoot` fallback. A new
+      `electron/services/folderNamingRules.cjs` (requiring `path` alone) with
+      `folderNaming.cjs` importing and re-exporting the same names verbatim is the smallest
+      cut that unlocks the tests; `pickCollisionFreeFileName` needs `fs` and a temp dir.
+   b. Make `paths.cjs` lazy (`getUserDataPath()` instead of a module-scope `const`). Bigger
+      and riskier: its own header records that the require-time `mkdir` and the legacy
+      `database/registrar_archive.db` copy must happen exactly once before anything reads
+      those paths, and `main.cjs` relies on that ordering — so this is a behavior-adjacent
+      change that needs its own smoke test, not a test-convenience edit.
+   c. Drive the tests through real Electron with a throwaway `--user-data-dir`. No source
+      change at all, but it is not Vitest and it needs the display-less launch question
+      answered first.
+   Note a second blocker for anything that opens the database: `better-sqlite3` loads in
+   plain Node but `new Database(...)` throws — the binding is rebuilt for Electron
+   (`NODE_MODULE_VERSION 119`, Node 22 needs another), which is exactly what
+   `npm run rebuild` is for. So tests must keep passing a handle or stay off the db.
