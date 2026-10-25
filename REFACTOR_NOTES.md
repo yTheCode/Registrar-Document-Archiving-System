@@ -112,6 +112,22 @@ Per hard rule 1 these are recorded only — NOT fixed during the refactor.
   Node 22 / full-icu raise `RangeError: Invalid time value` for an Invalid Date — a
   malformed `created_at` in the database would blow up the whole list render rather than
   show a placeholder. Pinned by tests as `toThrow` in 6-2.
+- **`buildStudentSearchFilter` turns a `null` term into a search for the text "null".**
+  `String(null)` is `'null'`, not `''` (`electron/services/studentQueries.cjs:12`), so a
+  direct call with `null`/`undefined` emits a real `LIKE '%null%'` filter over all six
+  columns instead of no filter. Latent, not live: `documents.ipc.cjs:284` guards with
+  `if (filters.studentName)` and the students handlers go through
+  `buildStudentListWhere`, whose default parameter `term = null` absorbs `undefined`.
+  Pinned by tests in 6-3b; hardening it would change the search results of any future
+  unguarded caller.
+- **`LIKE` wildcards in the search term are not escaped.** The same function wraps the word
+  as `'%word%'` with no `ESCAPE` clause, so a term containing `%` or `_` widens the match —
+  searching `100%` behaves like `1%0%` plus a trailing wildcard, and `_` matches any single
+  character. Reachable from students search and document search; recorded, not fixed.
+- **Name search is ASCII-case-insensitive only.** No `LOWER()` is applied and the term is
+  passed through verbatim, so case folding relies on SQLite's `LIKE`, which folds ASCII but
+  not non-ASCII — a stored `Naño` is not matched by the typed `NAÑO`. Recorded with the two
+  above; the fix (either escaping + `LOWER()` or a different collation) is a behavior change.
 - (other findings will be appended as phases progress)
 
 ## Phase 1a — dependency map for `electron/main.cjs` (2,838 lines, 46 IPC handlers)
@@ -1028,6 +1044,45 @@ would test cleanly *if* the module could load; see "After the defense" item 7.
 
 Verified at 6-3: `npm test` → still 8 files / 88 tests PASS (no new suite) · typecheck PASS ·
 build PASS (hashes unchanged) · lint → 0 errors, 112 warnings.
+
+### 11.5 6-3b — `studentQueries.cjs` is the one service that loads cleanly
+
+Owner-approved scope: test `buildStudentSearchFilter`, plus `buildStudentListWhere` only if
+verifiably pure; skip `pickedFiles.cjs`; do not touch anything needing a db handle.
+`buildStudentListWhere` is pure (string building + a call to `buildStudentSearchFilter`, no
+`getDb`, no `better-sqlite3`), so both are covered by
+`tests/electron/services/studentQueries.test.ts` — **21 tests**, bringing the suite to
+9 files / 109 tests. `buildStudentPage` is pure too but was deliberately left untested per
+the scope; `pickedFiles.cjs` skipped as instructed.
+
+Load path: the module is `require`d through Node's `createRequire(import.meta.url)` from the
+test — it is CJS, and this keeps its own require graph untouched. No stubs, no mocks, no
+loader patches; nothing under `electron/` changed.
+
+**Behavior pinned down (three items went to "Suspected bugs"):**
+- The clause is always the fixed six-column `LIKE ?` shape; every piece of user text lands
+  only in `params`. Verified with quote, semicolon, backslash, backtick, `*`, `/`, `:` and
+  the classic `'); DROP TABLE students;--` string, and by asserting
+  `count('?') === params.length`.
+- Commas are separators, not literals: `"Dela Cruz, Juan"` → three ANDed groups, 18 params
+  (6 columns per word). Whitespace runs, tabs and newlines collapse the same way.
+- `tableAlias` prefixes all six columns (`s.` inside the documents join) and is omitted for
+  the bare table; `buildStudentListWhere` never passes an alias, so it only serves the
+  unaliased table.
+- The term is written into `params` verbatim, so case is preserved and no `LOWER()` appears
+  in the clause — case-insensitivity is delegated to SQLite's `LIKE`, which only folds ASCII.
+- A test I expected to show a hazard came out the other way: `buildStudentListWhere({},
+  undefined)` is **safe**, because the default parameter `term = null` absorbs `undefined`.
+  So the `String(null)` → `'%null%'` problem is only reachable by calling
+  `buildStudentSearchFilter` directly, and both current callers guard first
+  (`documents.ipc.cjs:284` checks `if (filters.studentName)`, `students.ipc.cjs:11/23` go
+  through the wrapper). Latent, not live — recorded, not fixed.
+
+Verified at 6-3b: `npm test` → 9 files / 109 tests PASS · `npm run typecheck` PASS ·
+`npm run build` PASS (hashes unchanged: `index-BVwFChkt.css` 47.46 kB, `index-CRAdrw2B.js`
+411.73 kB — no `src/` or `electron/` file was touched) · `npm run lint` → 0 errors,
+112 warnings · the new suite was also type-checked with the throwaway config from item 4 and
+passes Prettier (`npm run format -- tests/electron/`).
 
 ## After the defense
 
