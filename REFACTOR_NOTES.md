@@ -1084,6 +1084,43 @@ Verified at 6-3b: `npm test` → 9 files / 109 tests PASS · `npm run typecheck`
 112 warnings · the new suite was also type-checked with the throwaway config from item 4 and
 passes Prettier (`npm run format -- tests/electron/`).
 
+## 11.6 6-4 — Phase 6-lite closing inventory (what is covered, what is not)
+
+9 suites / **109 tests**, all passing in ~0.9 s. No `src/` or `electron/` file was changed to
+achieve this, and lint, typecheck and build are untouched by the tests (Vitest only reads
+them).
+
+| Suite | Subject | Tests |
+| --- | --- | --- |
+| `tests/features/import-scanner/lib/documentValidation.test.ts` | `documentValidation.ts` | 14 |
+| `tests/features/import-scanner/lib/studentSearch.test.ts` | `studentSearch.ts` | 18 |
+| `tests/features/import-scanner/lib/queueHelpers.test.ts` | `queueHelpers.ts` | 10 |
+| `tests/features/import-scanner/lib/editableImages.test.ts` | `editableImages.ts` | 9 |
+| `tests/features/import-scanner/lib/cameraErrors.test.ts` | `cameraErrors.ts` | 9 |
+| `tests/features/import-scanner/lib/workflowLabels.test.ts` | `workflowLabels.ts` | 4 |
+| `tests/utils/format.test.ts` | `format.ts` | 13 |
+| `tests/utils/debounce.test.ts` | `debounce.ts` | 11 |
+| `tests/electron/services/studentQueries.test.ts` | `studentQueries.cjs` | 21 |
+
+Deliberately not covered, with the reason recorded rather than worked around:
+
+- `electron/services/folderNaming.cjs`, `archivePaths.cjs` (the 6-3 targets) — 22 of the 27
+  tracked `electron/*.cjs` files cannot load outside Electron; their require chain reaches
+  `paths.cjs` → `app.getPath()` at module scope. See §11.4 and "After the defense" item 7.
+- `electron/services/pickedFiles.cjs`, `db/migrations.cjs`, `ipc/index.cjs`, `window.cjs` —
+  these four do load cleanly in plain Node, but each needs a live db handle, an `ipcMain`
+  registration or a `BrowserWindow`, so there is no pure function to pin. Out of the approved
+  6-3b scope.
+- `src/components/ImageEditor.tsx` and `liveOutline.ts` — need a canvas (item 6); the
+  renderer components as a whole need a DOM environment that is not installed.
+- `buildStudentPage` — pure, but excluded by the 6-3b scope because its output feeds
+  db-handle-using callers; the risk of pinning the wrong contract was higher than the value.
+
+Three bugs surfaced this phase and were pinned, not fixed (§ "Suspected bugs"):
+`Intl.DateTimeFormat` throwing `RangeError` on an Invalid Date, `String(null)` →
+`'%null%'` in `buildStudentSearchFilter`, and unescaped `LIKE` wildcards plus ASCII-only case
+folding in the same function.
+
 ## After the defense
 
 Follow-ups deliberately deferred until the defense pass is finished.
