@@ -871,9 +871,12 @@ concern).
 - Reality check: `prettier --check .` reports 73 files, and the number barely moves with
   width (73 @120, 75 @160, 76 @240). The remaining gap is Prettier's structural
   re-wrapping (multi-line `style={{ … }}` objects, chained calls), not quotes/semis.
-  So `npm run format` (`prettier --write .`) is a whole-repo rewrite and MUST NOT be run
-  — format one file at a time. `*.md` and `package-lock.json` are in `.prettierignore`
-  for the same reason (table/list reflow).
+  A whole-repo pass would rewrite 73 files, so `"format"` was deliberately left as
+  `prettier --write` **with no default path** — it takes the target(s) from the caller
+  (`npm run format -- src/utils/format.ts`). With no arguments it exits 2
+  ("No parser and no file path given") and touches nothing, which is the guard against
+  an accidental repo-wide rewrite. `*.md` and `package-lock.json` are in
+  `.prettierignore` for the same reflow reason.
 - `vite.config.ts` and `tsconfig.node.json` do use trailing commas, so those two configs
   are already reported as unformatted by the `trailingComma: "none"` choice. Left alone.
 
