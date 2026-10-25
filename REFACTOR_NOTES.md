@@ -720,3 +720,17 @@ Follow-ups deliberately deferred until the defense pass is finished.
    §7 Phase-1b layout table ("`services/authz.cjs` isAdmin, buildStudentSearchFilter")
    and from the §1/§2 dependency maps drawn in Phase 1a, before the split was executed.
    Correcting §7 is a documentation fix, not a code move.
+3. **Align the remaining 1600-pixel detection with the live outline.**
+   `src/components/ImageEditor.tsx:187` (`runDetection`) still analyses at
+   `SCANNER_CONFIG.CAPTURE_ANALYSIS_MAX_SIDE` (1600) while the live outline runs at
+   `LIVE_ANALYSIS_MAX_SIDE` (640), so opening Edit on a capture can propose different
+   corners than the overlay just showed — the detector's luminance sampling bands and
+   blur/close kernels are all sized relative to the analysis pixels. Capture-time
+   detection was aligned to 640 in this commit; the editor is the same problem and is
+   NOT touched here (it is outside the one-change scope and is used by manual Edit too).
+   Also worth evaluating: instead of re-running the detector at capture, reuse the quad
+   the live loop already computed — but note it is a local `const quad` in
+   `runLiveDetection` (line 611) that is drawn and then discarded, so reuse means
+   keeping it in a ref first, and scaling it from the 640-pixel analysis box to the
+   full-resolution capture canvas. Needs a check that that scale factor is exact for
+   letterboxed previews before it replaces the second detection.

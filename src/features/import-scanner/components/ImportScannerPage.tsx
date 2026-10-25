@@ -651,7 +651,7 @@ function ImportScanner({ user }: PageProps) {
       // A failed detection must never cost the user the capture, so the full
       // frame stands whenever nothing usable comes back.
       try {
-        const detected = detectPaperQuad(canvas, { maxSide: SCANNER_CONFIG.CAPTURE_ANALYSIS_MAX_SIDE })
+        const detected = detectPaperQuad(canvas, { maxSide: SCANNER_CONFIG.LIVE_ANALYSIS_MAX_SIDE })
         if (detected && detected.confident) {
           const extracted = extractPaperDataUrl(canvas, detected)
           if (extracted) {
