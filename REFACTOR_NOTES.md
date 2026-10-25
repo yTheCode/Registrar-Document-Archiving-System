@@ -285,3 +285,286 @@ the seven `documents:*` handlers plus `createBatch` as one verbatim region.
 `files.ipc.cjs` (299) and `archive.ipc.cjs` (291) are at the limit. Splitting
 documents.ipc.cjs further would need a non-verbatim re-cut; deferred as a
 Phase-2 cleanup candidate together with the section-4 DRY items.
+
+## 8. Phase 3a — analysis of `src/pages/ImportScanner.tsx` (2,309 lines)
+
+No code edited in 3a. All line numbers are `src/pages/ImportScanner.tsx` on
+branch `refactor/phase-3`. Imported directly (not lazy) at src/App.tsx:7 and
+routed at src/App.tsx:99 (`/import`, admin-only per the Phase-0 uncertainty note).
+
+Counts: 33 `useState`, 12 `useRef`, 9 `useEffect`, 1 `useMemo`, 1 derived-state
+cluster, 39 handler/helper functions, ~985 lines of JSX.
+
+### 8.1 Logical sections
+
+| # | Section | Lines (logic) | Lines (JSX) |
+| --- | --- | --- | --- |
+| S1 | Admin gate + page shell (header, message banner, workflow banner) | 37-52, 268-269 | 1324-1395 |
+| S2 | Workflow / step state machine | 54-55, 845-861, 1200-1210, 257-266 | 1398-1476 |
+| S3 | Reference data loading (document types, students) | 114-115, 139-156 | — |
+| S4 | Student search + Add New Student modal | 116, 119-127, 160-254, 1196-1198 | 1243-1321, 2119-2270 |
+| S5 | Batch (session) student pick / change | 63, 1213-1241 | 1369-1395, 1479-1491 |
+| S6 | Deferred confirmation dialog | 60, 807-815, 1228-1241 | 2272-2285 |
+| S7 | Import queue (`filesWithMetadata`) + selection + review paging | 66-68, 97-98, 272-307, 348-384, 817-843, 895-918 | 1494-1536, 1745-1835, 1711-1737 |
+| S8 | Per-document metadata form + live sync back into the queue | 129-133, 281, 309-346, 865-893, 920-930 | 1838-2103 |
+| S9 | Camera device + stream + quality | 80-96, 388-582, 586-594, 796-805 | 1553-1625 |
+| S10 | jscanify live detection / auto-crop overlay | 101-112, 571-582, 597-703 | 1627-1680 |
+| S11 | Capture intake (add / retake) + finish/cancel | 69, 71, 711-793 | 1682-1706 |
+| S12 | Image editor modal + "Edit All Images" sequence | 70-78, 932-1037 | 2108-2116 |
+| S13 | Batch save / archive + results + saving overlay | 135-137, 1039-1194 | 2040-2102, 2288-2304 |
+
+### 8.2 State inventory, grouped by section
+
+**S1/S2 — shell + step machine**
+- `useState`: `workflow` (54), `step` (55), `message {type,text}` (56)
+- `useRef`: none
+- `useEffect`: `beforeunload` guard (257-266) → deps `[filesWithMetadata.length, step]`
+- derived: `isStudentWorkflow` (268), `isScanWorkflow` (269), `WORKFLOW_LABELS` (28-33, module const)
+
+**S3 — reference data**
+- `useState`: `documentTypes` (114), `students` (115)
+- `useEffect`: mount loader (139-142, `[]`) → `loadDocumentTypes` (144-149), `loadStudents` (151-156)
+
+**S4 — student search + add student**
+- `useState`: `searchTerm` (116), `showAddStudentForm` (120), `newStudentForm` (121), `pendingForceAdd` (124), `addStudentMessage` (125), `isAddingStudent` (126)
+- `useRef`: `pendingStudentPickRef` (119) — callback resumed after creation
+- derived: `filteredStudents` (1196-1198)
+
+**S5 — batch student**
+- `useState`: `batchStudent` (63)
+
+**S6 — confirm dialog**
+- `useState`: `confirmDialog` (60) — `{title, message, confirmLabel, danger?, action}`
+
+**S7 — queue**
+- `useState`: `filesWithMetadata` (66), `currentFileIndex` (67), `reviewPage` (68)
+- `useRef`: `nextTempIdRef` (97) + `newTempId()` (98)
+- `useEffect`: review-page sync on index change (272-274)
+- derived: `reviewTotalPages`/`reviewStart`/`reviewSlice` (276-278), `currentFile` (280), `readyCount` (298), `editableImageCount` (307)
+
+**S8 — metadata form**
+- `useState`: `currentStudent` (129), `currentDocType` (130), `currentAcademicYear` (131), `currentRemarks` (132), `currentDynamic` (133)
+- `useMemo`: `debouncedUpdate` (309-316, `debounce(…, 300)` keyed on `currentFileIndex`)
+- `useEffect`: cancel debounce on change (318-322); live-sync write-back (327-346, 12 deps, `JSON.stringify` diff on `dynamicMetadata`)
+- derived: `studentRequiredForCurrent` (281, literal `true` — see 8.5)
+
+**S9 — camera**
+- `useState`: `cameraStream` (80), `cameraError` (84), `videoDevices` (85), `deviceId` (86), `qualityOptions` (87), `selectedQuality` (88), `activeResolution` (91)
+- `useRef`: `cameraStreamRef` (83), `videoRef` (92), `cameraActiveRef` (93), `qualityPrefRef` (96)
+- `useEffect`: device enumeration + `devicechange` when `step==='camera'` (586-594); unmount teardown (796-805)
+
+**S10 — detection / auto-crop**
+- `useState`: `scannerState` (101), `documentFound` (102), `edgesUncertain` (105), `autoCropEnabled` (108)
+- `useRef`: `overlayCanvasRef` (109), `analysisCanvasRef` (110), `detectionBusyRef` (111)
+- `useEffect`: `initScanner()` when camera step opens (597-614); detection interval (617-621); overlay clear when auto-crop turned off (624-631)
+
+**S11 — capture intake**
+- `useState`: `capturedImage` (69), `retakeIndex` (71)
+
+**S12 — image editing**
+- `useState`: `showImageEditor` (70), `editAllImagesMode` (76)
+- `useRef`: `editorTargetRef` (74), `editQueueRef` (77)
+
+**S13 — save**
+- `useState`: `isProcessing` (135), `isSaving` (136), `batchResults` (137)
+
+### 8.3 Handlers and the data each touches
+
+| Handler | Lines | Reads | Writes |
+| --- | --- | --- | --- |
+| `handleStartWorkflow` | 1200 | `wf` | workflow, batchStudent, files, index, step |
+| `resetAll` | 845 | — | camera (via stopCamera), step, workflow, files, index, all 5 `current*`, batchResults, batchStudent, searchTerm, editQueue, editAllImagesMode |
+| `handlePickCurrentStudent` | 160 | `s` | currentStudent, searchTerm |
+| `openAddStudentForm` | 165 | `searchTerm` | pendingStudentPickRef, newStudentForm, addStudentMessage, showAddStudentForm |
+| `closeAddStudentForm` | 182 | — | pendingStudentPickRef, showAddStudentForm, addStudentMessage, pendingForceAdd |
+| `handleCreateStudent` | 189 | newStudentForm, pendingForceAdd, `user.id`, electronAPI create/getStudentById/addLog | students, searchTerm, all form/flags, then resumes `pendingStudentPickRef` callback |
+| `handleFileSelect` | 348 | electronAPI openFileDialog, isStudentWorkflow, batchStudent | files (append), index, all `current*`, searchTerm, step |
+| `handleJumpToFile` / `handleNextFile` / `handlePreviousFile` | 913 / 895 / 904 | files, index, `current*` | via `persistCurrentFileMetadata` + `loadFileMetadata` + index |
+| `persistCurrentFileMetadata` | 865 | files, index, batchStudent, currentStudent, `current*` | files (returns updated array synchronously) |
+| `loadFileMetadata` | 886 | file, batchStudent, isStudentWorkflow | all `current*`, searchTerm |
+| `handleCopyFromPrevious` | 920 | files, index | currentDocType/Year/Remarks/Dynamic, currentStudent, message (+3s clear) |
+| `handleDeleteCapture` → `executeDeleteCapture` | 807 / 817 | files, index, retakeIndex | confirmDialog → files, retakeIndex, camera+step when empty |
+| `handleRetakeCapture` | 828 | index, deviceId | retakeIndex, step, camera |
+| `handleEditCapture` | 834 | files, isEditableImage | message; delegates to `openImageInEditor` |
+| `handleStartScan` | 506 | deviceId | cameraError, retakeIndex, step, camera |
+| `handleCancelCamera` | 788 | — | camera, retakeIndex, step, cameraError |
+| `handleFinishScanning` | 771 | files, batchStudent, isStudentWorkflow | camera, retakeIndex, index, all `current*`, searchTerm, step |
+| `handleCapturePhoto` | 711 | `videoRef`, retakeIndex, files, batchStudent, isStudentWorkflow | files (append or replace), retakeIndex, documentFound, edgesUncertain, message |
+| `handleSwitchCamera` | 535 | newDeviceId | qualityPrefRef, qualityOptions, selectedQuality, deviceId, camera |
+| `handleQualityChange` | 546 | qualityOptions, cameraStream | selectedQuality, qualityPrefRef, cameraError, activeResolution, message (+3.5s) |
+| `handleToggleAutoCrop` | 571 | autoCropEnabled | autoCropEnabled, message (no timer) |
+| `openImageInEditor` | 976 | file, electronAPI readPickedFileAsBase64 | editorTargetRef, capturedImage, showImageEditor |
+| `handleEditAllImages` | 1000 | files, isEditableImage | editAllImagesMode, editQueueRef, editor (via openImageInEditor), message |
+| `handleImageEdit` | 932 | editorTargetRef, editAllImagesMode, editQueueRef, files | files (`editedDataUrl`+`thumbnail`), editor state, message |
+| `handleImageEditCancel` | 1023 | editAllImagesMode | editorTargetRef, editAllImagesMode, editQueueRef, editor state, message |
+| `handleSubmit` | 1039 | finalized queue, documentTypes, `user.id`, electronAPI getSetting/generateFolderPath/saveBase64Image/copyFile/createDocumentsBatch, useToast showError | isProcessing, isSaving, message, batchResults, then `resetAll` after 3 s when clean |
+
+### 8.4 Pure logic (no React needed)
+
+- `WORKFLOW_LABELS` (28-33)
+- `validateDocument` (285-295) + `isFileReady` (297) — needs `documentTypes` as an argument
+- `isEditableImage` (301-306)
+- `newTempId` counter (97-98)
+- review pagination math (276-278)
+- student search filter (1196-1198)
+- `looksLikeId` prefill heuristic (166-168) + empty `newStudentForm` shape (121/170-177)
+- camera `Error.name` → friendly text mapping (490-500)
+- `drawLiveOutline` (633-667) — canvas math + strokes; only needs `(overlayCanvas, videoDims, quad, analysisWidth)`
+- per-file archive loop in `handleSubmit` (1079-1138) and batch-row shape (1122-1132) — async electronAPI calls, no state
+- the "set message, auto-clear after N ms" idiom — **8 sites** (568, 839, 929, 960, 967, 1008, 1031, 1219) → DRY candidate
+- the `FileWithMetadata` literal shape — **3 sites** (357-369 disk, 745-756 capture, 735-742 retake patch) → DRY candidate
+- `success`/`error` unwrap shape used by every electronAPI call here matches the `{ success, error, … }` contract (hard rule 8)
+
+### 8.5 Suspected bugs / dead code found (recorded only — NOT fixed)
+
+- `studentRequiredForCurrent` is a hardcoded `true` (281), which makes the
+  "Not Student-Specific" branch (1984-1991) unreachable dead JSX. The comment
+  at 281 says all documents now require a student.
+- `loadDocumentTypes` (144) and `loadStudents` (151) ignore `result.success ===
+  false` silently (no console, no toast) — violates the "never swallow errors"
+  convention; kept verbatim.
+- `beforeunload` guard (257-266) only warns when `step !== 'details'`, so an
+  unsaved batch sitting on the tagging screen is lost without warning.
+- On `createDocumentsBatch` failure (1143) the files already copied into the
+  archive are not rolled back — orphaned files on disk with no DB rows.
+- `handleImageEdit` (947-953) reads `filesWithMetadata` from the closure made
+  when `handleEditAllImages` opened the editor; during a long Edit-All pass the
+  array can be stale for anything except the `editedDataUrl` write. Indices stay
+  valid because nothing reorders the queue mid-sequence.
+- `resetAll` (845) does not clear `deviceId`, `videoDevices`, `qualityOptions`,
+  `qualityPrefRef` or `autoCropEnabled`, so a Start Over keeps the last camera
+  and quality choice. Probably intended; recorded.
+- The 3-second post-save `setTimeout` (1178) can fire after the user navigates
+  away, calling `resetAll`/`setIsSaving` on an unmounted component.
+- The live-detection interval effect (617-621) omits `runLiveDetection` from its
+  deps (intentional — it only reads refs). Any future ESLint enablement (Phase
+  6-lite) will flag this and the 12-dep live-sync effect (327-346).
+- Two parallel notification channels (`message` banner + `useToast().showError`)
+  coexist; save failures use the toast, capture feedback uses the banner.
+
+### 8.6 Proposed `src/features/import-scanner/` layout
+
+The page implementation moves into the feature folder; `src/App.tsx` keeps its
+current `import ImportScanner from './pages/ImportScanner'` (src/App.tsx:7) and
+its `/import` route (src/App.tsx:99) untouched — that file becomes the re-export
+shim described in §9 #1. The component keeps the `PageProps` signature.
+
+```
+src/features/import-scanner/
+  components/
+    ImportScannerPage.tsx        ~180  composition only: gate, banners, step switch, modals
+    AccessRestricted.tsx         ~20   S1 guard card (37-52)
+    WorkflowPicker.tsx           ~85   S2 four mode buttons (1398-1476)
+    WorkflowBanner.tsx           ~60   S1/S5 indicator + locked-student summary (1343-1395)
+    StepFileAcquisition.tsx      ~50   S2 'files' screen (1494-1536)
+    SessionStudentPicker.tsx     ~85   S4 renderStudentSearch, verbatim (1243-1321)
+    DocumentStudentField.tsx     ~95   S4 details-step search block (1901-1993)
+    AddStudentModal.tsx          ~155  S4 modal (2119-2270)
+    CameraPanel.tsx              ~120  S9 controls row (1553-1625)
+    CameraPreview.tsx            ~65   S10 video + overlay + status pill (1627-1680)
+    CaptureActions.tsx           ~55   S11 capture/finish/cancel + hint (1682-1706)
+    ScannedQueue.tsx             ~35   S7 thumbnail cards (1711-1737)
+    ReviewTable.tsx              ~100  S7 table + Pagination (1745-1835)
+    DocumentNavCard.tsx          ~65   S8 current-file + prev/next (1838-1895)
+    DocumentDetailsForm.tsx      ~120  S8 student/type/year/remarks (1897-2037)
+    BatchResultsList.tsx         ~28   S13 results (2040-2060)
+    ImportActionBar.tsx          ~48   S13 copy/cancel/submit (2063-2102)
+    ImageEditorModal.tsx         ~20   S12 wrapper (2108-2116)
+    SavingOverlay.tsx            ~22   S13 overlay (2288-2304)
+  hooks/
+    useReferenceData.ts          ~45   S3 documentTypes/students + loaders
+    useAddStudent.ts             ~110  S4 form/flags + create + resume callback
+    useConfirmDialog.ts          ~30   S6 open/resolve
+    useImportQueue.ts            ~150  S7 files/index/review + add/append/patch/delete/jump
+    useDocumentMetadata.ts       ~110  S8 current* + debounced live-sync + persist/load/copy
+    useCamera.ts                 ~190  S9 stream, devices, quality, start/stop/switch
+    useLiveDetection.ts          ~150  S10 scannerState, quad overlay, auto-crop flag
+    useCaptureIntake.ts          ~90   S11 capture/retake/finish/cancel
+    useImageEditing.ts           ~130  S12 editor + Edit-All queue
+    useImportSubmit.ts           ~140  S13 validation + archive loop + results
+  lib/
+    workflowLabels.ts            WORKFLOW_LABELS + isStudent/isScan predicates
+    documentValidation.ts        validateDocument, isFileReady
+    editableImages.ts            isEditableImage, editableIndices
+    queueHelpers.ts              tempId counter, FileWithMetadata builders (3 call shapes), pagination math
+    studentSearch.ts             filterStudents(students, term), looksLikeId prefill
+    cameraErrors.ts              Error.name → friendly message
+    liveOutline.ts               drawLiveOutline(overlay, videoDims, quad, analysisWidth)
+    archiveBatch.ts              per-file generateFolderPath + save/copy loop → results
+    transientMessage.ts          CLEANUP-COMMIT ONLY (see §9 #4) — not part of the moves
+```
+
+State that stays in `ImportScannerPage.tsx` (per §9): `message`, `searchTerm`,
+`step`, `workflow`. Everything else moves behind a hook.
+
+`src/pages/ImportScanner.tsx` becomes a one-line re-export of
+`@/features/import-scanner/components/ImportScannerPage`. src/App.tsx is NOT
+edited and the old page file is NOT deleted (owner decision, §9 #1).
+
+### 8.7 Questions raised in 3a (answered — see §9)
+
+1. Re-export shim vs repointing src/App.tsx:7.
+2. The two student-search UIs (1243-1321 and 1901-1993) are near-duplicates but
+   differ in class names, result cap (8 vs 5), input height (`h-10` vs `h-9`)
+   and placeholder. Hard rule 2 forbids changing class names, and rule 7 needs
+   3+ occurrences → dedupe or not.
+3. `message` banner state is read by 5 sections — who owns it.
+4. `resetAll` spans 11 setters across 6 hooks, and `stopCamera` must run first
+   (side-effect order) → thin page-level `handleResetAll` calling each hook's
+   `reset*()` in the current order.
+5. `useCaptureIntake` needs `videoRef` from `useCamera` plus queue + retake
+   state — the tightest coupling in the file.
+6. `handleSubmit` depends on queue, validation, `documentTypes`, `user.id` and
+   `handleJumpToFile` → `useImportSubmit({ queue, metadata, documentTypes, userId, showError, onSaved })`.
+7. Step ordering, leaf → root, one commit each, typecheck + build per step
+   (kept as the plan, now 3b-1 … 3b-10, since App.tsx is no longer repointed).
+
+## 9. Phase 3a decisions (approved by owner, 2026-10-25)
+
+1. **Page wiring:** keep `src/pages/ImportScanner.tsx` as a **one-line
+   re-export** of the new `ImportScannerPage`. Do **not** edit src/App.tsx and
+   do **not** delete the old page file. Retargeting App.tsx and dropping the
+   shim happens *after* the defense pass.
+2. **`message` banner state:** stays in the page verbatim. Feature hooks receive
+   `setMessage` as an argument; the banner component receives `message` as a
+   prop. Any effect or callback that depends on `setMessage` must use the raw
+   setter or a `useCallback` wrapper so its identity stays stable.
+   **No `useMessage` hook.** Auto-dismiss timers stay with the page state.
+3. **Student search:** two separate components copied verbatim, named for where
+   they are used (`SessionStudentPicker`, `DocumentStudentField`). No
+   parameterizing, no merging. Differences recorded under "Dedupe later" below.
+4. **Transient-message DRY:** because `setMessage` lives in the page and the 8
+   `setTimeout` clears sit inside handlers, the verbatim move keeps each
+   handler's own timer. `lib/transientMessage.ts` is a **cleanup-commit** item
+   only (rule 4/7), and must land as a plain helper, not a hook.
+
+### Dedupe later — the two student-search blocks
+
+Both read `searchTerm`, `filteredStudents`, `currentStudent`, and both call
+`setSearchTerm('')` on pick/clear and `openAddStudentForm(...)` on the empty
+state. Differences to reconcile in a later commit:
+
+| Aspect | `renderStudentSearch` 1243-1321 → `SessionStudentPicker` | details-step block 1901-1993 → `DocumentStudentField` |
+| --- | --- | --- |
+| Call sites | one (line 1489, `selectStudent` step) | one (line 1903, inside `!isStudentWorkflow && studentRequiredForCurrent`) |
+| Pick callback | `onPick` parameter — call site passes `handlePickBatchStudent`; item click runs `onPick(student)` then `setSearchTerm('')` | inline `setCurrentStudent(student)` then `setSearchTerm('')` |
+| Add-student target | `openAddStudentForm(onPick)` (forwards the same callback) | `openAddStudentForm(handlePickCurrentStudent)` |
+| Field label | none | `label-caps` "Student" + red `*` |
+| Outer wrapper | `div` (no class) | `div` (no class), label as first child |
+| Badge container | `mb-3 flex items-center gap-2 … px-4 py-2.5` | `flex items-center gap-2 … px-3 py-2.5` (no `mb-3`, `px-3`) |
+| Badge name | `text-sm font-bold text-[#182a43] truncate` | `text-xs font-bold text-[#182a43] truncate` |
+| Input row wrapper | `relative mb-3` | `relative mb-2` |
+| Input | `h-10`, `text-sm`, placeholder "Search by name, school year, or student ID…", **`autoFocus`** | `h-9`, `text-xs`, placeholder "Search students…", **no `autoFocus`** |
+| Results container | `max-h-64 overflow-y-auto …` | `max-h-48 overflow-y-auto …` |
+| Result cap | `filteredStudents.slice(0, 8)` | `filteredStudents.slice(0, 5)` |
+| Result name row | `text-sm font-bold text-[#263950]` | `text-xs font-bold text-[#263950]` |
+| Result button / mono row classes | identical (`w-full px-3 py-2 text-left hover:bg-[#f8fafc] border-b border-[#edf0f3] last:border-0`, `mono mt-0.5 text-[10px] text-[#8995a4]`) | identical |
+| Clear-selection button | identical classes and identical `onClick` (`setCurrentStudent(null)`, `setSearchTerm('')`) | identical |
+| Empty state text | `No students found for "{searchTerm}"` | same |
+| Add New Student button classes | `mt-2 inline-flex … text-xs font-bold text-[#24558d] …` | same |
+| Quirk to preserve | the selected-student badge renders from **`currentStudent`**, not `batchStudent`, even on the `selectStudent` step (the two are synced by `handlePickBatchStudent` at 1221-1222) | renders from `currentStudent` |
+
+No merge is possible without a `size`/`autoFocus`/`maxResults`/`label` prop set;
+that is a behavior-neutral cleanup for a dedicated commit.
+
+*(Phase 3a complete: no source edits. Awaiting owner approval before 3b-1.)*
