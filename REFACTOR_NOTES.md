@@ -251,3 +251,37 @@ Suspected bugs: all left logged and unfixed (hard rule 1).
 `npm run typecheck`, `npm run build`, `npm run dev` (app must launch, no
 main-process errors), and at the end of Phase 1: `ipcMain.handle(` count still
 46 with no duplicate channel names.
+
+## 7. Phase 1b — executed split (refactor/phase-1)
+
+Commits: `026c7ad` (step 1 paths/window), `f35150a` (step 2 db/),
+`4750df9` (step 3 services/), `e13ce21` (step 4 ipc/ + index.cjs).
+
+Final layout (all moves verbatim; only module preludes and `__dirname`
+anchors adapted):
+
+```
+electron/main.cjs              80 lines  lifecycle + createWindow only
+electron/paths.cjs                      dbDir paths, legacy copy side effects
+electron/window.cjs                     getMainWindow / setMainWindow
+electron/db/connection.cjs              getDb / setDb / initialize / close
+electron/db/migrations.cjs              runMigrations + table schemas
+electron/services/authz.cjs             isAdmin, buildStudentSearchFilter
+electron/services/studentQueries.cjs
+electron/services/archivePaths.cjs      getArchiveRoot, resolveArchivePath...
+electron/services/folderNaming.cjs      PROGRAM_FOLDERS, computeDocumentTypeFolder...
+electron/services/archiveMigrations.cjs startup folder/relative-path migrations
+electron/services/backup.cjs
+electron/services/pickedFiles.cjs       shared Set instance (never reassigned)
+electron/ipc/*.ipc.cjs (14 modules) + index.cjs (registerAllIpc)
+```
+
+Handler count: 46 across the 14 ipc modules, no duplicate channel names, 0 in
+main.cjs. Verified per step: typecheck, build, `npm run dev` launch with
+"Database initialized" and no main-process errors.
+
+**Rule-10 overrun:** `electron/ipc/documents.ipc.cjs` is 418 lines (>300) —
+the seven `documents:*` handlers plus `createBatch` as one verbatim region.
+`files.ipc.cjs` (299) and `archive.ipc.cjs` (291) are at the limit. Splitting
+documents.ipc.cjs further would need a non-verbatim re-cut; deferred as a
+Phase-2 cleanup candidate together with the section-4 DRY items.
