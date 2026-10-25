@@ -96,6 +96,22 @@ Per hard rule 1 these are recorded only — NOT fixed during the refactor.
   `// eslint-disable-next-line react-hooks/exhaustive-deps` over a `[dragCorner]`
   dependency array that now reports nothing, so ESLint flags the directive itself
   (the one `--fix`-able warning in the repo).
+- **Page window offsets are only clamped at the top.** `getReviewWindow`
+  (`src/features/import-scanner/lib/queueHelpers.ts:4`) does
+  `Math.min(page, totalPages)` but nothing guards the low end: page 0 gives
+  `start: -5` and an empty window, page -1 gives `start: -10` and — because
+  `Array.slice` reads negatives from the end — shows the *wrong five files*.
+  Pinned by tests in 6-2; fixing it would change what the review table renders.
+- **`isEditableImage` assumes every queue row still has its `File`.**
+  `src/features/import-scanner/lib/editableImages.ts:5` reads `f.file.name` before
+  checking anything else, so it throws `TypeError` on the `filePath`-only rows that
+  `validateDocument` explicitly accepts. Not hit today (the Edit gate only sees
+  capture/import rows that carry a File), recorded as latent.
+- **Date formatting throws instead of degrading.** `formatDate`/`formatTimestamp`
+  (`src/utils/format.ts`) call `Intl.DateTimeFormat.format()` on the parsed date, and
+  Node 22 / full-icu raise `RangeError: Invalid time value` for an Invalid Date — a
+  malformed `created_at` in the database would blow up the whole list render rather than
+  show a placeholder. Pinned by tests as `toThrow` in 6-2.
 - (other findings will be appended as phases progress)
 
 ## Phase 1a — dependency map for `electron/main.cjs` (2,838 lines, 46 IPC handlers)
@@ -903,6 +919,69 @@ was modified):
   NOT launched from here — `npm run dev` opens a window, so the owner should confirm the
   app start once.
 
+### 11.2 6-1b — `format` cannot rewrite the repo by accident
+
+`"format"` became `prettier --write` with **no default path**, so the caller supplies the
+targets: `npm run format -- src/utils/format.ts`. Verified: with no arguments it exits 2
+(`[error] No parser and no file path given, couldn't infer a parser.`) and leaves the tree
+clean; with one explicit file it reports `(unchanged)` for a file that already matches the
+style. typecheck/build/test unchanged.
+
+### 11.3 6-2 — tests for the pure renderer logic
+
+New: `tests/helpers/fixtures.ts` (shared `makeStudent` / `makeDocumentTypes` /
+`makeFileEntry` / `makeFileList`, used by 3+ suites) and 8 suites, **88 tests, all
+passing**:
+
+| file | tests |
+| --- | --- |
+| `tests/features/import-scanner/lib/documentValidation.test.ts` | 14 |
+| `tests/features/import-scanner/lib/studentSearch.test.ts` | 18 |
+| `tests/features/import-scanner/lib/cameraErrors.test.ts` | 9 |
+| `tests/features/import-scanner/lib/queueHelpers.test.ts` | 10 |
+| `tests/features/import-scanner/lib/editableImages.test.ts` | 9 |
+| `tests/features/import-scanner/lib/workflowLabels.test.ts` | 4 |
+| `tests/utils/format.test.ts` | 13 |
+| `tests/utils/debounce.test.ts` | 11 |
+
+Nothing was mocked except the callbacks/timers `debounce` needs (`vi.fn` + fake timers) and
+the frozen clock in `formatTimestamp`; every assertion is real output, and every suite was
+written against the module as it is — several recorded rather than "corrected" the
+expectation I started with. `@` resolves through `vitest.config.ts`; `File` is Node's own
+global, no DOM environment needed.
+
+**Behavior the tests pinned down (each one is a candidate bug, so recorded not fixed):**
+- `validateDocument` uses `parseInt(f.documentTypeId)` with no radix and no format check:
+  `'1abc'`, `'2.9'` and `' 2 '` all validate as ids 1/2. `'0x2'` parses as 2 in Node 22 too.
+  When the type is missing it returns early, so a null `student` is not reported alongside.
+- `getReviewWindow` clamps the high page (`Math.min(page, totalPages)`) but not the low end:
+  page 0 → `{ start: -5, slice: [] }` and page -1 → a negative offset that slices from the
+  **end** of the queue (`tmp-3…tmp-7` for 12 items). See "Suspected bugs".
+- `isEditableImage` dereferences `f.file.name` unguarded, so a `filePath`-only row throws
+  `TypeError` even though `validateDocument` explicitly tolerates such rows. Tested as
+  `toThrow` to document the contract, not to change it.
+- `filterStudents` does not trim, and matches against the concatenated
+  `"first last id year"` string: `' juan'` finds nobody, while
+  `'Cruz 2024-00123'` (a term spanning two fields) matches.
+- `describeCameraError` reads `error.name` only when `error instanceof Error`, so a plain
+  `{ name: 'NotFoundError' }` object gets the generic message. Real `DOMException`s do work
+  — `DOMException instanceof Error` is true in Node 22, and that is the path the browser
+  takes, so the mapping is not broken in practice.
+- `formatDate`/`formatTimestamp` **throw** `RangeError` on an unparseable value (Node 22 /
+  full-icu `Intl.format(Invalid Date)`), they do not return `'Invalid Date'`. The
+  `'Today at'`/`'Yesterday at'` split compares Asia/Manila calendar days, so a timestamp
+  whose UTC date is yesterday is labelled today, and there is no future branch: a timestamp
+  dated ahead of today falls through to the plain date label.
+- `src/features/import-scanner/lib/liveOutline.ts` is the one lib file with no suite — it is
+  canvas/OpenCV-bound, outside the "pure TypeScript only" scope of 6-2.
+
+Verified at 6-2: `npm test` → 8 files / 88 tests PASS · `npm run typecheck` → PASS ·
+`npm run build` → PASS (`index-BVwFChkt.css` 47.46 kB, `index-CRAdrw2B.js` 411.73 kB,
+unchanged) · `npm run lint` → 102 files, 0 errors, 112 warnings (the new suites add no
+warnings). `tests/` is still outside `tsconfig.json`, so `npm run typecheck` does not cover
+it; it was checked once with a throwaway config (`tsc -p` over `tests/**/*.ts` + the app
+types, exit 0) and that config was deleted — see "After the defense" item 4.
+
 ## After the defense
 
 Follow-ups deliberately deferred until the defense pass is finished.
@@ -934,3 +1013,14 @@ Follow-ups deliberately deferred until the defense pass is finished.
    keeping it in a ref first, and scaling it from the 640-pixel analysis box to the
    full-resolution capture canvas. Needs a check that that scale factor is exact for
    letterboxed previews before it replaces the second detection.
+4. **Type-check the tests.** Add a `tsconfig.test.json` (`include: ["tests"]`, the `@/*`
+   paths, `types: ["node"]`) and a `typecheck:tests` script. Phase 6-2 verified the suites
+   once with a throwaway config instead of widening `tsconfig.json`, because that file's
+   `include: ["src"]` is what the `build` script's `tsc` pass compiles into the app.
+5. **Promote the linter.** All rules are `warn` today so linting can never fail a build.
+   Once the defense is behind us, move `react-hooks/rules-of-hooks` to `error` and gate on
+   `eslint . --max-warnings 0` per directory — the 100 conditional-hook warnings from the
+   three admin-gated pages (§11.3 and "Suspected bugs") are the work list, and fixing them
+   means moving each `if (user.role !== 'admin') return` guard below the hook block.
+6. **`liveOutline.ts` has no tests** — it needs a canvas, so it was out of the pure-TS
+   scope of 6-2. A jsdom/happy-dom environment would be the prerequisite.
