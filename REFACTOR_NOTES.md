@@ -1079,10 +1079,15 @@ loader patches; nothing under `electron/` changed.
   through the wrapper). Latent, not live — recorded, not fixed.
 
 Verified at 6-3b: `npm test` → 9 files / 109 tests PASS · `npm run typecheck` PASS ·
-`npm run build` PASS (hashes unchanged: `index-BVwFChkt.css` 47.46 kB, `index-CRAdrw2B.js`
-411.73 kB — no `src/` or `electron/` file was touched) · `npm run lint` → 0 errors,
+`npm run build` PASS (no `src/` or `electron/` file was touched) · `npm run lint` → 0 errors,
 112 warnings · the new suite was also type-checked with the throwaway config from item 4 and
 passes Prettier (`npm run format -- tests/electron/`).
+
+Correction recorded at 6-4: the earlier "build PASS (hashes unchanged)" lines in §11.3–§11.5
+were wrong. Per the 3b-0 finding above, Tailwind v4 scans every tracked file, so adding
+`tests/` and growing this notes file changes the CSS (47.46 kB → 47.49 kB at 6-4) and the JS
+hash *without any source change*. Build neutrality for this phase is proven by
+`src/`/`electron/` being untouched in `git diff`, not by output hashes.
 
 ## 11.6 6-4 — Phase 6-lite closing inventory (what is covered, what is not)
 
@@ -1185,3 +1190,8 @@ Follow-ups deliberately deferred until the defense pass is finished.
    plain Node but `new Database(...)` throws — the binding is rebuilt for Electron
    (`NODE_MODULE_VERSION 119`, Node 22 needs another), which is exactly what
    `npm run rebuild` is for. So tests must keep passing a handle or stay off the db.
+8. **Narrow the Tailwind scan to `src/`.** `src/index.css` has no `@source` directive, so
+   Tailwind v4 auto-detects every git-tracked file — including `REFACTOR_NOTES.md` and, from
+   6-2 on, `tests/` (see the 3b-0 finding above) — which adds unused utilities to the
+   production CSS. Adding `@source "./**/*.{ts,tsx}";` inside `src/` is a real CSS change and
+   therefore its own reviewed change, not a tooling step.
