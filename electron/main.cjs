@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog } = require('electron');
+const { app, BrowserWindow, dialog, Menu } = require('electron');
 const path = require('path');
 const { pathToFileURL } = require('url');
 
@@ -12,12 +12,13 @@ const { registerAllIpc } = require('./ipc/index.cjs');
 const { session } = require('./security/session.cjs');
 const { createSenderGuard, createUrlPolicy } = require('./security/senderGuard.cjs');
 const { resolveRuntimeMode } = require('./security/runtimeMode.cjs');
+const { isBlockedShortcut } = require('./security/blockedKeys.cjs');
 
 const INDEX_HTML_PATH = path.join(__dirname, '../dist/index.html');
 
 // Q1: production means packaged. This is the only dev/production decision in the
 // process, and it reads nothing from the environment.
-const { isDev, devServerUrl, openDevTools } = resolveRuntimeMode({ isPackaged: app.isPackaged });
+const { isDev, devServerUrl, devTools } = resolveRuntimeMode({ isPackaged: app.isPackaged });
 
 // Q6: the only pages allowed to call IPC are the ones this process loads into
 // the main window.
@@ -43,12 +44,22 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      devTools,
       preload: path.join(__dirname, 'preload.js')
     },
     autoHideMenuBar: true,
     icon: path.join(__dirname, '../src/assets/adzu-seal.png')
   });
   setMainWindow(mainWindow);
+
+  // Q2: a packaged build has no DevTools and no menu, and the shortcuts that
+  // would open or reload them are swallowed before the renderer sees them.
+  if (!isDev) {
+    Menu.setApplicationMenu(null);
+    mainWindow.webContents.on('before-input-event', (event, input) => {
+      if (isBlockedShortcut(input)) event.preventDefault();
+    });
+  }
 
   // The app is single-window: once this window goes away nobody is logged in.
   mainWindow.on('closed', () => {
@@ -64,7 +75,7 @@ function createWindow() {
   }
 
   // DevTools follow the same decision.
-  if (openDevTools) mainWindow.webContents.openDevTools();
+  if (devTools) mainWindow.webContents.openDevTools();
 }
 
 app.whenReady().then(() => {

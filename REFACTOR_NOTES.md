@@ -1348,3 +1348,24 @@ Follow-ups deliberately deferred until the defense pass is finished.
   Manual check: `npm run dev` still loads localhost:5173 with DevTools; in a packaged build
   started with `NODE_ENV=development`, the window shows the app from `dist/index.html` and no
   DevTools (acceptance item 2).
+- **P1B cp3 (2026-10-27)** — Q2: a packaged build has no DevTools and no menu. New pure
+  `electron/security/blockedKeys.cjs` (`isBlockedShortcut(input)`) matches Electron's
+  `before-input-event` input for F12, F5 (which also catches Ctrl+F5), Ctrl+R,
+  Ctrl+Shift+R, Ctrl+Shift+I and Ctrl+Shift+J; it only fires on `keyDown`, reads the
+  shifted character Electron reports (`key: 'I'`), and requires `control === true` (the
+  Windows accelerators; `meta` is deliberately not treated as Ctrl).
+  `main.cjs` passes `devTools` (from `resolveRuntimeMode`) into the main window's
+  `webPreferences` and, **only when `!isDev`**, calls `Menu.setApplicationMenu(null)` and
+  installs the `before-input-event` filter — so dev keeps DevTools, reload and the default
+  menu. `electron/ipc/files.ipc.cjs` gives the hidden print window the same `devTools`
+  value, so both windows follow the one decision. Renamed the runtime-mode field
+  `openDevTools` → `devTools` so the same value is both the webPreferences flag and the
+  gate for `openDevTools()` (cp2's line above still shows the old name; nothing else uses
+  it). Why: register R11 — the default Electron menu ships Reload / Force Reload / Toggle
+  Developer Tools, and `autoHideMenuBar` only hides the bar.
+  9 new tests in `tests/electron/security/blockedKeys.test.ts` and 5 source-level wiring
+  tests in `tests/electron/security/devToolsWiring.test.ts` (the two files cannot be
+  required outside Electron, same approach as the P1A wiring tests).
+  Manual check: packaged app — F12 opens nothing, Ctrl+Shift+I opens nothing, no menu bar
+  (and Alt shows none), the app still loads and navigates; `npm run dev` still opens
+  DevTools and F5 still reloads.

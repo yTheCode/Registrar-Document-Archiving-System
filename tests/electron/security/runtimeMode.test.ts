@@ -8,7 +8,7 @@ const { DEV_SERVER_URL, resolveRuntimeMode } = require('../../../electron/securi
   resolveRuntimeMode: (options?: unknown) => {
     isDev: boolean
     devServerUrl: string | null
-    openDevTools: boolean
+    devTools: boolean
   }
 }
 
@@ -17,7 +17,7 @@ describe('resolveRuntimeMode', () => {
     expect(resolveRuntimeMode({ isPackaged: true })).toEqual({
       isDev: false,
       devServerUrl: null,
-      openDevTools: false
+      devTools: false
     })
   })
 
@@ -25,7 +25,7 @@ describe('resolveRuntimeMode', () => {
     expect(resolveRuntimeMode({ isPackaged: false })).toEqual({
       isDev: true,
       devServerUrl: DEV_SERVER_URL,
-      openDevTools: true
+      devTools: true
     })
   })
 
@@ -50,7 +50,7 @@ describe('resolveRuntimeMode', () => {
   })
 
   it('fails closed when the packaged flag is missing or not a boolean', () => {
-    const production = { isDev: false, devServerUrl: null, openDevTools: false }
+    const production = { isDev: false, devServerUrl: null, devTools: false }
 
     expect(resolveRuntimeMode()).toEqual(production)
     expect(resolveRuntimeMode({})).toEqual(production)
@@ -62,7 +62,7 @@ describe('resolveRuntimeMode', () => {
   })
 
   it('keeps DevTools tied to dev mode, not to a separate switch', () => {
-    expect(resolveRuntimeMode({ isPackaged: false }).openDevTools).toBe(true)
-    expect(resolveRuntimeMode({ isPackaged: true }).openDevTools).toBe(false)
+    expect(resolveRuntimeMode({ isPackaged: false }).devTools).toBe(true)
+    expect(resolveRuntimeMode({ isPackaged: true }).devTools).toBe(false)
   })
 })

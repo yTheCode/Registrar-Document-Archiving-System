@@ -7,6 +7,10 @@ const { getDb } = require('../db/connection.cjs');
 const { isAdmin } = require('../services/authz.cjs');
 const { validateAndResolvePath, resolveArchivePath } = require('../services/archivePaths.cjs');
 const { sessionPickedFiles } = require('../services/pickedFiles.cjs');
+const { resolveRuntimeMode } = require('../security/runtimeMode.cjs');
+
+// Q2: DevTools exist only in a dev build, on every window this process creates.
+const { devTools } = resolveRuntimeMode({ isPackaged: app.isPackaged });
 
 
 // File operations
@@ -223,6 +227,7 @@ ipcMain.handle('file:print', async (event, { filePath, userId }) => {
         sandbox: true,
         nodeIntegration: false,
         contextIsolation: true,
+        devTools,
         preload: PRELOAD_PATH
       }
     });
