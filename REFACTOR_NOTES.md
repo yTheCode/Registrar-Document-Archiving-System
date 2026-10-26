@@ -1297,3 +1297,22 @@ Follow-ups deliberately deferred until the defense pass is finished.
   main window was cleared, and `ipcMain.handle` compares identical before/after.
   Manual check: run the app, open DevTools, confirm login/search/import work and
   `getAllUsers` still answers; the print preview window (native print dialog) still opens.
+- **P1A cp5 (2026-10-27)** — Closed out Q6's coverage rule and the register.
+  `tests/electron/security/ipcGuardWiring.test.ts` (9 tests) reads the sources and fails if an
+  `*.ipc.cjs` module is not required exactly once by `electron/ipc/index.cjs`, if the guarded
+  `ipcMain.handle` is installed after the first require or not restored after the last, if any
+  file outside `electron/ipc` registers a handler or requires a handler module, if a channel
+  name repeats (47 today), or if `main.cjs` stops passing `validateSender`. Proven non-vacuous:
+  a planted `electron/ipc/zz-rogue.ipc.cjs` failed two tests and a planted `electron/zz-rogue.cjs`
+  with a bare `ipcMain.handle` failed the outside-registration test; both files were deleted.
+  `docs/SECURITY_REGISTER.md`: §4/§5 mitigation text updated, R1 and R2 marked fixed (Q5), R3
+  marked narrowed but open (Q6 does not add login to those channels), and R18–R20 recorded as
+  residual risks — renderer reload keeps the main-process session, `backup:restore` swaps the
+  users table under a live session, and the sender URL check sits behind the main-frame
+  identity check with the packaged route-URL allowance measured rather than specified.
+  Per your decision the URL policy stays as implemented and HashRouter is not adopted in this
+  phase; the register names HashRouter as the fallback if a packaged route URL is ever denied.
+  Why: a guard that one module can opt out of is not a guard, and the register must not keep
+  claiming no session exists.
+  Manual check: `npx vitest run tests/electron/security/ipcGuardWiring.test.ts` passes; add a
+  throwaway `electron/ipc/zz.ipc.cjs` with one `ipcMain.handle` and watch it fail.
