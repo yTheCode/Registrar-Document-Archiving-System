@@ -1205,3 +1205,11 @@ Follow-ups deliberately deferred until the defense pass is finished.
   re-verified on `main` (commit `7d285f0`) before S1 starts. No application code changed.
   Manual check: open the file and confirm `git diff --stat` shows only `docs/` plus this
   line; the cited `file:line` locations exist on `security/s0-baseline`.
+- **S0 cp2 (2026-10-26)** — Added the `npm audit` triage as §7 of
+  `docs/SECURITY_REGISTER.md`: 27 advisories (4 critical / 17 high / 6 moderate),
+  `npm audit --omit=dev` reports 2 moderate, grouped by whether the package reaches the
+  installer. Why: `HANDOFF.md` §12 recorded 23 advisories and `electron` is declared as a
+  devDependency even though it ships, so the raw count misleads; S5 needs the real split.
+  No package, lockfile or source change — every offered fix is a major bump.
+  Manual check: `npm audit --omit=dev` still reports the two `react-router` advisories and
+  `git diff --stat` shows no change under `package.json` / `package-lock.json`.

@@ -129,14 +129,54 @@ as strong as T1 allows.
 | R12 | Print window loads the app preload (`PRELOAD_PATH`) into a generated temp HTML file | `electron/ipc/files.ipc.cjs:218-228` | Low | S3 | open |
 | R13 | `folders:generatePath` accepts a renderer-supplied `archiveRoot` and `mkdir`s under it (type name is sanitised, only file writes are re-validated) | `electron/ipc/folders.ipc.cjs:11-13`; `electron/services/folderNaming.cjs:35-42,68` | Medium | S2 | open |
 | R14 | Backup restore extracts a ZIP to temp, then trusts the archive path stored inside the backup DB; `isSafeArchiveTarget` is an exact match against a forbidden list, so subfolders of Documents pass | `electron/ipc/backup.ipc.cjs:148,158,161`; `electron/services/backup.cjs:11-23` | Medium | S4 | verify |
-| R15 | Electron 28 (out of support) and unresolved npm advisories | `package.json` (`electron ^28.1.0`) | Medium | S5 | open |
+| R15 | Electron 28.3.3 (out of support) and 27 unresolved npm advisories | §7 below; `package.json` (`electron ^28.1.0`) | High | S5 | open |
 | R16 | Archive data is plaintext on disk and in backups | `electron/db/connection.cjs:41`; backup ZIP has no password | Medium | S6 | open |
 | R17 | Archive-root fallback differs: `getArchiveRoot()` → `Documents/ADZU_Archive`, DB init/`resolveArchiveDir` → `userData/Archive` | `electron/services/archivePaths.cjs:30`; `electron/db/connection.cjs:163`; `electron/services/backup.cjs:27` | Low | S2 | open |
 
 R17 is an integrity issue rather than an attacker-controlled one; it is listed
 because a missing setting silently splits reads from backup paths.
 
-## 7. Controls that are already right (keep them)
+## 7. Dependency audit triage (S0 cp2)
+
+Run on 2026-10-26 against the installed tree with `npm audit` and
+`npm audit --omit=dev`. Nothing was installed, removed or patched.
+
+| Measure | Result |
+| --- | --- |
+| `npm audit` | 27 advisories: **4 critical, 17 high, 6 moderate**, 0 low |
+| `npm audit --omit=dev` | 2 moderate (`react-router`, `react-router-dom`) |
+| Tree size | 137 prod, 605 dev, 742 total packages |
+| HANDOFF §12 recorded | 23 (4 moderate / 17 high / 2 critical) — the advisory database has grown since that snapshot |
+
+`--omit=dev` **understates** this app: `electron` is declared in
+`devDependencies` but it is the shipped runtime, so treat the Electron group as
+runtime.
+
+| Group | Installed packages | Worst severity | In the installer? | Practical exposure | Fix |
+| --- | --- | --- | --- | --- | --- |
+| Electron runtime | `electron@28.3.3` (46 advisories) | high | **yes** (the shell itself) | Includes context-isolation bypass via `Function.prototype.bind`, sandboxed-iframe popup escapes, `shell.openPath` null-byte bypass, Windows `setLoginItemSettings` unquoted path | `electron@41.7.1` (major); needs `npm run rebuild` + installer check |
+| Renderer prod deps | `react-router-dom@6.30.6`, `react-router@6.30.6` | moderate | **yes** | Open redirect via backslash needs an attacker-controlled link/navigate target; the app uses static routes and has no `useNavigate` call. The SSR-hydration advisory does not apply | `react-router-dom@7.18.4` (major) |
+| Install script | `extract-zip@2.0.1` (under `electron`) | high | no — runs at `npm install` | Symlink/zip traversal while unpacking Electron's own download on the build machine | arrives with Electron 41 |
+| Packaging | `electron-builder@24.13.3`, `app-builder-lib`, `builder-util`, `builder-util-runtime`, `dmg-builder`, `electron-publish`, `electron-builder-squirrel-windows` | high | no | Build machine only: installer assembly | `electron-builder@26.18.0` (major) |
+| Rebuild toolchain | `@electron/rebuild@3.7.2`, `@electron/node-gyp` (git), `make-fetch-happen@10.2.1`, `cacache@16.1.3`, `http-cache-semantics@4.2.0`, `ip-address@10.7.2`, `tar@6.2.1` | critical (`tar`), high | no | Runs only for `npm run rebuild`; tar extraction of downloaded headers/tarballs | npm suggests `@electron/rebuild@0.0.0`, which is not a real version — resolve after the Electron upgrade |
+| Dev server | `vite@5.4.21`, `esbuild@0.21.5` | high | no | Localhost dev server on Windows: `server.fs.deny` bypass, launch-editor UNC/NTLM disclosure and argument injection | `vite@6.4.5` (major, coordinate with Vitest) |
+| Test tooling | `vitest@2.1.9`, `tinypool@1.1.1`, `@vitest/mocker`, `vite-node` | critical (tinypool prototype-pollution → RCE; Vitest UI arbitrary file read) | no | Only if the Vitest UI server is exposed; this repo runs `vitest run` | `vitest@4.1.12` (major, needs Vite 6/7) |
+| Dev script | `shell-quote@1.10.0` (under `concurrently`) | critical | no | `concurrently` launches fixed strings from `package.json`; no untrusted token reaches `quote()` | npm reports a fix, no version given |
+| Dev polling | `follow-redirects@1.16.0` (`wait-on` → `axios`) | high | no | Polls `http://localhost:5173` only | npm reports a fix, no version given |
+| Build-time maps | `source-map-js@1.2.1` (Tailwind, PostCSS, jsdom) | high (DoS) | no | Needs malicious indexed source maps during a build | npm reports a fix, no version given |
+
+**Conclusion.** Only two groups can affect an installed copy: the Electron binary
+(high) and the router (moderate, not currently reachable). Every other advisory
+is limited to the build or developer machine, and every offered fix is a
+major-version bump, so none belongs in S0. `npm audit fix --force` remains
+forbidden.
+
+**S5 order.** Electron 41 + `npm run rebuild` + installer smoke test first;
+then `react-router-dom` 7; then `vite` 6 and `vitest` 4 together; then
+`electron-builder` 26 and `@electron/rebuild` 4. Re-run `npm audit` and
+`npm audit --omit=dev` after each step.
+
+## 8. Controls that are already right (keep them)
 
 - `contextIsolation: true`, `nodeIntegration: false`, single-file preload, no
   remote content in production (`electron/main.cjs:18-22`).
@@ -155,7 +195,7 @@ because a missing setting silently splits reads from backup paths.
 - `runMigrations`/`buildStudentSearchFilter` tests pin current SQL-builder
   behaviour, including known flaws (`tests/electron/services/studentQueries.test.ts`).
 
-## 8. Corrections to HANDOFF §10 (current code differs)
+## 9. Corrections to HANDOFF §10 (current code differs)
 
 | HANDOFF claim | Current code |
 | --- | --- |
@@ -163,10 +203,9 @@ because a missing setting silently splits reads from backup paths.
 | `logs:add` "callable from the renderer", listed as unchecked | It is admin-guarded (`logs.ipc.cjs:10`), but the actor id is renderer-supplied, so T8/R10 still stands |
 | Unguarded list omits `file:print`, `students:getById`, `dialog:*`, `documentTypes:getAll` | All four are unguarded as well |
 
-## 9. S0 remaining items
+## 10. S0 remaining items
 
-- **npm audit triage** — not started (S0 cp2). Separate runtime from dev-only;
-  `npm audit fix --force` stays forbidden.
+- **npm audit triage** — done in S0 cp2, see §7. No fix applied.
 - **Git history check** — not started (S0 cp3). Look for committed `*.db`,
   student data, keys and tokens in all refs; report only, no history rewrite
   without explicit approval.
@@ -175,8 +214,9 @@ because a missing setting silently splits reads from backup paths.
   extraction, junction/UNC behaviour on the archive path, and the installer
   build (`npm run build:win` has not been re-run since the refactor).
 
-## 10. Phase log
+## 11. Phase log
 
 | Date | Checkpoint | Change |
 | --- | --- | --- |
 | 2026-10-26 | S0 cp1 | Created this register: S0 baseline, threat model, verified IPC inventory, 17 risks, HANDOFF corrections. No application code changed. |
+| 2026-10-26 | S0 cp2 | npm audit triage (§7): 27 advisories, only Electron and the router reach the installer, all fixes are major bumps deferred to S5. No dependency changed. |
