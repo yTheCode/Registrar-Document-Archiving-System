@@ -13,6 +13,7 @@ const { session } = require('./security/session.cjs');
 const { createSenderGuard, createUrlPolicy } = require('./security/senderGuard.cjs');
 const { resolveRuntimeMode } = require('./security/runtimeMode.cjs');
 const { isBlockedShortcut } = require('./security/blockedKeys.cjs');
+const { DENY_WINDOW_OPEN, decideNavigation, decidePermission } = require('./security/navGuard.cjs');
 
 const INDEX_HTML_PATH = path.join(__dirname, '../dist/index.html');
 
@@ -60,6 +61,23 @@ function createWindow() {
       if (isBlockedShortcut(input)) event.preventDefault();
     });
   }
+
+  // Q7: this window only ever shows the app's own page. No pop-ups, no
+  // navigation away from the page the process loaded, no webviews, and the only
+  // permission it may hold is the camera.
+  mainWindow.webContents.setWindowOpenHandler(() => DENY_WINDOW_OPEN);
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (!decideNavigation({ url, isAllowedUrl })) event.preventDefault();
+  });
+  mainWindow.webContents.on('will-attach-webview', event => event.preventDefault());
+
+  const mainSession = mainWindow.webContents.session;
+  mainSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    callback(webContents === mainWindow.webContents && decidePermission({ permission, details }));
+  });
+  mainSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
+    return webContents === mainWindow.webContents && decidePermission({ permission, details });
+  });
 
   // The app is single-window: once this window goes away nobody is logged in.
   mainWindow.on('closed', () => {

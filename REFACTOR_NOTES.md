@@ -1388,3 +1388,24 @@ Follow-ups deliberately deferred until the defense pass is finished.
   a cleanup candidate.
   Manual check: print an image document (default printer dialog appears and the page is
   fit-to-page), and print a PDF (opens in its default app) — both unchanged.
+- **P1B cp5 (2026-10-27)** — Q7: the main window may not open pop-ups, navigate away, attach
+  webviews, or hold any permission except the camera. New pure
+  `electron/security/navGuard.cjs`: `DENY_WINDOW_OPEN` (frozen `{ action: 'deny' }` —
+  nothing in the app ever opened a window or an external link, so there is nothing to
+  preserve), `decideNavigation({ url, isAllowedUrl })` which **injects the Q6 URL policy**
+  so "the app's own page" has one definition (packaged `dist/index.html` plus the flat route
+  URLs; dev also allows the Vite origin), and `decidePermission({ permission, details })`
+  which grants only `permission === 'media'` with `mediaTypes` exactly `['video']` (request
+  handler shape) or `mediaType === 'video'` (check handler shape). `main.cjs` installs
+  `setWindowOpenHandler`, `will-navigate`, `will-attach-webview` on the main window's
+  webContents and both permission handlers on its session, each gated on
+  `webContents === mainWindow.webContents`, in dev **and** packaged (a dev build is not a
+  reason to allow navigation away).
+  Trade-off recorded: Chromium's label/enumeration probe (`mediaType: 'unknown'`) is denied,
+  so device names may fall back to the UI's existing `Camera N` label; the picker degrades,
+  the camera does not.
+  20 tests in `tests/electron/security/navGuard.test.ts` (including a case that runs the
+  decisions through the real `createUrlPolicy` for packaged and dev) plus 5 source-level
+  wiring tests in `tests/electron/security/navGuardWiring.test.ts`.
+  Manual check: packaged app — a link or `window.open` to an outside site does nothing, and
+  scanning still finds and previews the camera; dev — same, plus DevTools still opens.
