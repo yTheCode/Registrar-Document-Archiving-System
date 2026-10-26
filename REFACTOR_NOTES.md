@@ -1445,3 +1445,31 @@ Follow-ups deliberately deferred until the defense pass is finished.
   `package.json` wiring.
   Manual check: on the installed app, `set ELECTRON_RUN_AS_NODE=1` then run the exe — the app
   window opens normally (no Node REPL); the app still logs in, scans and prints.
+- **P1B cp5d (2026-10-27)** — Camera permission diagnosis, covering cp5b and cp5c; supersedes
+  the cp5 trade-off and cp5b's `'unknown'`-only allowance recorded above.
+  **What the regression was:** after Q7 installed permission handlers, the camera dropdown
+  listed only "Default camera"/"Camera 1", and `enumerateDevices()` returned a single
+  `videoinput` with an empty label and empty `deviceId`, while `getUserMedia({ video })` still
+  produced a working feed. Cause: Q7's check handler denied the microphone check, and Chromium
+  hides **every** device name until the microphone name check passes — so denying audio also
+  emptied the camera list. cp5b allowed only `mediaType: 'unknown'`, which was not the shape
+  that mattered.
+  **How it was diagnosed:** temporary `console.log` lines in both permission handlers in
+  `main.cjs` printed the permission name, `JSON.stringify(details)`, the argument types, whether
+  `webContents` was the main window / null / other, and the decision (plus a `console-message`
+  mirror of `ENUM_*` probe lines typed in DevTools, to order the logs against an
+  `enumerateDevices()` call). They showed media checks in two denied shapes: `mediaType:
+  'audio'`, and no `mediaType` key at all (`{ embeddingOrigin, isMainFrame, requestingUrl }`).
+  A temporary experiment that returned true for every media check made Camo Studio, Iriun
+  Webcam and OBS Virtual Camera appear again. All logging and the experiment were removed with
+  `git restore electron/main.cjs`.
+  **Final rule:** `decidePermissionCheck` in `electron/security/navGuard.cjs` grants any
+  `media` check from the main window, whatever the `mediaType` (missing, `unknown`, `video`,
+  `audio`); every other permission is denied. The request handler is unchanged: `mediaTypes`
+  must be exactly `['video']`, so no microphone stream can be opened. A check grants no stream;
+  microphone and speaker *names* become visible to the app's own page.
+  Tests updated in `navGuard.test.ts` (audio and no-`mediaType` checks allowed; audio and
+  `['video','audio']` requests still denied; non-media permissions denied) and the pin comment
+  in `navGuardWiring.test.ts`; register R22 records the rationale.
+  Manual check: the camera dropdown lists real device names, and `getUserMedia({ audio: true })`
+  still fails.
