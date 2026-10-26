@@ -1238,3 +1238,17 @@ Follow-ups deliberately deferred until the defense pass is finished.
   46 / 27 / 1 public / 18 unguarded. No application code changed.
   Manual check: `git diff --stat` shows only `docs/security/` plus this line; the cited
   `file:line` pairs in the document open on `security/p1a-identity`.
+- **P1A cp2 (2026-10-27)** — Added the two pure modules Q5 is built on:
+  `electron/security/session.cjs` (factory `createSession()` with `get`/`set`/`clear`/
+  `isCurrentUser`, plus the single shared `session` instance the main process uses; no
+  electron or db import) and `electron/security/adminDecision.cjs`
+  (`decideAdmin({ session, userId, row })` → true only for a live session whose
+  `userId` equals the argument, compared by value so `1` and `"1"` are the same account,
+  and a row that is `role === 'admin'` **and** `status === 'active'`). `set()` stores a
+  snapshot and `get()` returns a copy, so a mutated login result or a mutation of the
+  returned object cannot change the session. Why: Q5 needs the decision to be testable
+  without electron, a db handle or a real login, and the register's R1 evidence showed
+  `isAdmin` never reads `status`. 20 new tests in `tests/electron/security/`; no
+  application file changed yet, so nothing in the app behaves differently.
+  Manual check: `npx vitest run tests/electron/security` passes; `session.cjs` and
+  `adminDecision.cjs` require cleanly in plain Node.
