@@ -40,7 +40,11 @@ describe('DevTools and menu wiring (Q2)', () => {
 
   it('gives the hidden print window the same DevTools setting', () => {
     expect(files).toContain('resolveRuntimeMode({ isPackaged: app.isPackaged })')
-    const printWindow = files.slice(files.indexOf('const printWindow = new BrowserWindow({'))
-    expect(printWindow.slice(0, 400)).toContain('devTools,')
+    const start = files.indexOf('const printWindow = new BrowserWindow({')
+    expect(start).toBeGreaterThan(-1)
+    // Slice to the end of the options object: `devTools` is the last property
+    // (no trailing comma since Q4 removed the preload that followed it).
+    const block = files.slice(start, files.indexOf('});', start))
+    expect(block).toMatch(/\bdevTools\b/)
   })
 })

@@ -1369,3 +1369,22 @@ Follow-ups deliberately deferred until the defense pass is finished.
   Manual check: packaged app — F12 opens nothing, Ctrl+Shift+I opens nothing, no menu bar
   (and Alt shows none), the app still loads and navigates; `npm run dev` still opens
   DevTools and F5 still reloads.
+- **P1B cp4 (2026-10-27)** — Q4: the hidden print window no longer gets the app preload.
+  `electron/ipc/files.ipc.cjs` drops `preload: PRELOAD_PATH` from that `BrowserWindow` and
+  drops `PRELOAD_PATH` from its `paths.cjs` import (no other use in the file); `sandbox:
+  true`, `nodeIntegration: false`, `contextIsolation: true` and the Q2 `devTools` value
+  stay. Safe because the page is a generated `%TEMP%` HTML with a single `<img>` and no
+  `<script>`, and printing is driven by `webContents.print` from the main process — nothing
+  in that page ever called the bridge (`docs/security/p1b-window-analysis.md` §5), so no
+  data has to move into the URL. Why: register R12 — a temp `file://` page carried all 47
+  IPC methods.
+  4 source-level tests in `tests/electron/security/printWindowWiring.test.ts` (the module
+  cannot be required outside Electron and the window is a live BrowserWindow, so the wiring
+  is pinned by reading the source, as the P1A wiring tests do). **cp3's pin was updated in
+  this commit**: `devToolsWiring.test.ts` looked for the literal `devTools,`, and removing
+  the `preload` line made `devTools` the last property (no trailing comma), so it now slices
+  the whole options object and matches `/\bdevTools\b/`. `PRELOAD_PATH` is now
+  exported by `electron/paths.cjs` with no consumer — left in place (README documents it),
+  a cleanup candidate.
+  Manual check: print an image document (default printer dialog appears and the page is
+  fit-to-page), and print a PDF (opens in its default app) — both unchanged.
