@@ -1316,3 +1316,18 @@ Follow-ups deliberately deferred until the defense pass is finished.
   claiming no session exists.
   Manual check: `npx vitest run tests/electron/security/ipcGuardWiring.test.ts` passes; add a
   throwaway `electron/ipc/zz.ipc.cjs` with one `ipcMain.handle` and watch it fail.
+- **P1B cp1 (2026-10-27)** — Added `docs/security/p1b-window-analysis.md`: the single
+  dev/production decision (`main.cjs:17`, `NODE_ENV === 'development' || !app.isPackaged`)
+  and the finding that a packaged build launched with `NODE_ENV=development` loads
+  `localhost:5173` and opens DevTools; both windows' `webPreferences` (main window leaves
+  `sandbox` unset, print window sets it and still carries `PRELOAD_PATH`); no application
+  menu is ever set, so the default Electron menu (Reload / Force Reload / Toggle DevTools)
+  ships; the only privileged web API in `src/` is `getUserMedia({ video })` — no audio,
+  notifications, clipboard or display capture; no `window.open`, no anchors, no
+  `will-navigate`/`setWindowOpenHandler`/`will-attach-webview` anywhere; the print page is
+  a generated temp HTML with one `<img>` and no `<script>`, so it calls no
+  `window.electronAPI` method; installer script is `npm run build:win`; `@electron/fuses`
+  is **not** installed. Why: CP2–CP6 need the current behaviour and the exact lines, and
+  CP6 must stop before installing anything. No application code changed.
+  Manual check: `git diff --stat` shows only `docs/security/` plus this line; open the file
+  and confirm §1 and §5 match `electron/main.cjs:17` and `electron/ipc/files.ipc.cjs:200-228`.
