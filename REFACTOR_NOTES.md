@@ -1195,3 +1195,13 @@ Follow-ups deliberately deferred until the defense pass is finished.
    6-2 on, `tests/` (see the 3b-0 finding above) — which adds unused utilities to the
    production CSS. Adding `@source "./**/*.{ts,tsx}";` inside `src/` is a real CSS change and
    therefore its own reviewed change, not a tooling step.
+
+## Security phase
+
+- **S0 cp1 (2026-10-26)** — Added `docs/SECURITY_REGISTER.md`: S0 baseline, one-page
+  threat model, verified IPC authorization inventory (46 channels, 27 guarded, 19 not),
+  17-risk register with current-code evidence, and three corrections to `HANDOFF.md` §10.
+  Why: `HANDOFF.md` §11 makes S0 the threat-model step, and every finding must be
+  re-verified on `main` (commit `7d285f0`) before S1 starts. No application code changed.
+  Manual check: open the file and confirm `git diff --stat` shows only `docs/` plus this
+  line; the cited `file:line` locations exist on `security/s0-baseline`.
