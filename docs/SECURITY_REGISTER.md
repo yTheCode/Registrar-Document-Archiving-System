@@ -118,7 +118,7 @@ as strong as T1 allows.
 | R1 | Admin checks trust a renderer-supplied id | `electron/services/authz.cjs:6-10`; 27 call sites across `electron/ipc/*` | Critical | S1 | open |
 | R2 | No main-process session; login is a renderer-side fact | `electron/ipc/auth.ipc.cjs:8-37`; `src/App.tsx:31,40,45` (sessionStorage) | High | S1 | open |
 | R3 | 18 data/file channels need no login | table in §5 | High | S1 | open |
-| R4 | Default accounts seeded at first run: `admin`/`admin123`, `user`/`user123` | `electron/db/connection.cjs:117-134` | High | S1 | open |
+| R4 | Default accounts seeded at first run and printed on the login screen (and in the README) | `electron/db/connection.cjs:117-134`; `src/pages/Login.tsx:210-219`; `README.md:754-759` | High | S1 | open |
 | R5 | No login throttling or lockout; synchronous bcrypt compare | `electron/ipc/auth.ipc.cjs:16` | Medium | S1 | open |
 | R6 | `file:copy` validates only the destination; `sourcePath` may be any local file, then `file:readAsBase64` reads it back | `electron/ipc/files.ipc.cjs:13-33` (copy at :32) | High | S2 | open |
 | R7 | Path containment is string-only: no `realpath`, so junctions/symlinks escape; Windows case/trailing-dot/8.3/UNC forms are not normalised | `electron/services/archivePaths.cjs:8-26,36-45` | High | S2 | open |
@@ -176,7 +176,40 @@ then `react-router-dom` 7; then `vite` 6 and `vitest` 4 together; then
 `electron-builder` 26 and `@electron/rebuild` 4. Re-run `npm audit` and
 `npm audit --omit=dev` after each step.
 
-## 8. Controls that are already right (keep them)
+## 8. Git history and secret check (S0 cp3)
+
+Scope: every ref in this clone — 5 local branches, `origin/main`,
+`origin/kennettlao-security-patch-1`, 6 tags — 32 commits, 252 objects,
+158 blobs, and no unreachable or dangling objects (`git fsck --unreachable`
+is empty). Read-only: nothing rewritten, deleted or pushed.
+
+| Check | Basis | Result |
+| --- | --- | --- |
+| Database / archive / key files by extension | `git rev-list --objects --all` plus name filter (`db`, `db-wal`, `db-shm`, `sqlite`, `zip`, `7z`, `rar`, `tar`, `gz`, `bak`, `pem`, `p12`, `pfx`, `key`, `jks`, `keystore`, `kdbx`, `env`, `npmrc`, `netrc`, `pgpass`, `ovpn`, `pdf`, `docx`, `xlsx`, `csv`, `dcm`, `tif`) | **0 matches** |
+| Sensitive directories / dotfiles | `database/`, `Archive/`, `archives/`, `backup(s)/`, `students/`, `documents/`, `uploads/`, `secrets/`, `credentials/`, `.env*`, `id_rsa*`, `.npmrc`, `.netrc`, `.git-credentials`, `credentials.json` | **0 matches** |
+| File contents | 10 high-signal patterns over all 158 blobs: private-key headers, AWS keys, GitHub/Slack/Google/Stripe tokens, JWTs, URLs with embedded credentials, `password/secret/token/api_key = "..."` assignments, literal `Bearer` tokens | **0 matches** |
+| Commit messages | `git log --all` filtered for password/secret/token/credential wording | **0 matches** |
+| Largest blobs | seal PNG 381 kB, `package-lock.json` 357 kB, then source and notes | no data dumps |
+| Ignore rules on `origin/main` | `*.db`, `*.db-wal`, `*.db-shm`, `.env`, `Archive/`, `archives/`, `dist/`, `release/`, `node_modules/`, `public/scanner/` | present |
+| Working tree | root dotfiles, `git status --ignored` | no `.env` or `.npmrc`; only `dist/`, `node_modules/`, `public/` are ignored |
+
+Scanner validation: the blob reader was checked against a known literal
+(`admin123`), which it found in five paths, so the zero result is a real
+negative rather than a parsing failure.
+
+**Committed credential material (not a leaked secret, still exposed).** The
+default accounts are hardcoded at `electron/db/connection.cjs:117-134`, the
+login screen prints them unconditionally in production
+(`src/pages/Login.tsx:210-219`), and `README.md:754-759` documents them. This
+extends R4: anyone who reaches the login screen is handed working administrator
+credentials. Recorded for S1; not changed in S0.
+
+**Not verifiable from this clone.** GitHub repository visibility, and the older
+pre-restart repository named in `HANDOFF.md` §9. Only one remote is configured
+(`yTheCode/Registrar-Document-Archiving-System`). Both need a manual check on
+GitHub.
+
+## 9. Controls that are already right (keep them)
 
 - `contextIsolation: true`, `nodeIntegration: false`, single-file preload, no
   remote content in production (`electron/main.cjs:18-22`).
@@ -195,7 +228,7 @@ then `react-router-dom` 7; then `vite` 6 and `vitest` 4 together; then
 - `runMigrations`/`buildStudentSearchFilter` tests pin current SQL-builder
   behaviour, including known flaws (`tests/electron/services/studentQueries.test.ts`).
 
-## 9. Corrections to HANDOFF §10 (current code differs)
+## 10. Corrections to HANDOFF §10 (current code differs)
 
 | HANDOFF claim | Current code |
 | --- | --- |
@@ -203,20 +236,23 @@ then `react-router-dom` 7; then `vite` 6 and `vitest` 4 together; then
 | `logs:add` "callable from the renderer", listed as unchecked | It is admin-guarded (`logs.ipc.cjs:10`), but the actor id is renderer-supplied, so T8/R10 still stands |
 | Unguarded list omits `file:print`, `students:getById`, `dialog:*`, `documentTypes:getAll` | All four are unguarded as well |
 
-## 10. S0 remaining items
+## 11. S0 remaining items
 
 - **npm audit triage** — done in S0 cp2, see §7. No fix applied.
-- **Git history check** — not started (S0 cp3). Look for committed `*.db`,
-  student data, keys and tokens in all refs; report only, no history rewrite
-  without explicit approval.
+- **Git history check** — done in S0 cp3, see §8. No committed database,
+  archive, student data, key or token file; no secret pattern in any blob. No
+  history rewrite.
+- **GitHub repository visibility and the pre-restart repository** — manual
+  check on GitHub; not visible from this clone (§8).
 - **Confirm at their phase:** main-window `sandbox` effective value (not set
   explicitly; Electron defaults it on), `adm-zip@0.6.1` zip-slip behaviour during
   extraction, junction/UNC behaviour on the archive path, and the installer
   build (`npm run build:win` has not been re-run since the refactor).
 
-## 11. Phase log
+## 12. Phase log
 
 | Date | Checkpoint | Change |
 | --- | --- | --- |
 | 2026-10-26 | S0 cp1 | Created this register: S0 baseline, threat model, verified IPC inventory, 17 risks, HANDOFF corrections. No application code changed. |
 | 2026-10-26 | S0 cp2 | npm audit triage (§7): 27 advisories, only Electron and the router reach the installer, all fixes are major bumps deferred to S5. No dependency changed. |
+| 2026-10-26 | S0 cp3 | Git history and secret check (§8): no committed database, archive, student data, key or token file; no secret pattern in 158 blobs; no unreachable objects. Found default credentials printed on the login screen (recorded under R4). Read-only; no code or history changed. |

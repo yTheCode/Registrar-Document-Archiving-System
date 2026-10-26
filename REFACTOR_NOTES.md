@@ -1213,3 +1213,16 @@ Follow-ups deliberately deferred until the defense pass is finished.
   No package, lockfile or source change — every offered fix is a major bump.
   Manual check: `npm audit --omit=dev` still reports the two `react-router` advisories and
   `git diff --stat` shows no change under `package.json` / `package-lock.json`.
+- **S0 cp3 (2026-10-26)** — Added the git history and secret check as §8 of
+  `docs/SECURITY_REGISTER.md`: all 5 local branches, both remote branches, 6 tags, 32
+  commits and 158 blobs scanned for database/archive/key files, sensitive directories,
+  ten high-signal secret patterns and secret-like commit messages — zero matches; no
+  unreachable objects; ignore rules cover data. The scanner was proven against the known
+  literal `admin123` before the zero result was trusted. Why: S0 must show that no
+  student data or credential material is already in history before any later phase builds
+  on it. Found that the production login screen prints the default admin credentials
+  (`src/pages/Login.tsx:210-219`), recorded under R4 for S1. Read-only: no history
+  rewrite, nothing deleted or pushed, no application code changed.
+  Manual check: `git rev-list --objects --all | grep -Ei '\.(db|sqlite|zip|pem|key|env)$'`
+  prints nothing, and opening the login page (or `src/pages/Login.tsx`) shows the
+  credential block is not DEV-gated.
