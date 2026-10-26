@@ -1,5 +1,5 @@
 // Q7: the window may only navigate inside the app's own page, may not open
-// pop-ups or attach webviews, and may only use the camera.
+// pop-ups or attach webviews, and may only open a camera stream.
 // Pure (no electron, no paths.cjs) so both decisions can be tested. The URL rule
 // is injected: main.cjs passes the same Q6 policy the IPC guard uses, so "the
 // app's own page" has exactly one definition in the process.
@@ -55,23 +55,20 @@ function decidePermission(options) {
 }
 
 /**
- * The permission *check* handler asks a weaker question than the request
- * handler: "may this page see the camera at all?". Chromium probes it with
- * `mediaType: 'unknown'` when it only needs device labels, which grants no
- * stream — allowing it keeps camera names in the picker. Requests stay
- * video-only through `decidePermission`, so audio is still denied everywhere.
+ * The permission *check* handler answers "may this page see media devices at
+ * all?", not "may it open a stream". Chromium hides every device name unless
+ * the microphone name check passes, so denying audio here empties the camera
+ * list too (measured: `enumerateDevices()` returned a single unnamed entry
+ * while `getUserMedia({ video })` worked). A check opens nothing, and
+ * `decidePermission` still allows only video requests, so microphone streams
+ * stay blocked. Every other permission is denied.
  *
- * @param {{ permission?: unknown, details?: unknown }} options
+ * @param {{ permission?: unknown }} options
  * @returns {boolean}
  */
 function decidePermissionCheck(options) {
-  if (decidePermission(options)) return true;
-
-  const { permission, details } = options || {};
-  if (permission !== 'media') return false;
-
-  const info = details && typeof details === 'object' ? details : {};
-  return !Array.isArray(info.mediaTypes) && info.mediaType === 'unknown';
+  const { permission } = options || {};
+  return permission === 'media';
 }
 
 module.exports = { DENY_WINDOW_OPEN, decideNavigation, decidePermission, decidePermissionCheck };

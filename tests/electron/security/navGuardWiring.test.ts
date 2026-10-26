@@ -33,7 +33,8 @@ describe('navigation, pop-up and permission wiring (Q7)', () => {
     const body = createWindow()
     expect(body).toContain('setPermissionRequestHandler(')
     expect(body).toContain('setPermissionCheckHandler(')
-    // Requests stay video-only; checks also allow Chromium's label probe.
+    // Requests stay video-only; checks grant every media probe, because
+    // Chromium hides all device names unless the microphone check passes.
     expect(body).toContain('webContents === mainWindow.webContents && decidePermission({ permission, details })')
     expect(body).toContain('webContents === mainWindow.webContents && decidePermissionCheck({ permission, details })')
     // One call site each: either handler drifting to the other decision is a regression.

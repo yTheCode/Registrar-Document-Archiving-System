@@ -90,8 +90,9 @@ window's main frame on an allowed page (Q6). Path containment is string-based
 decided by `app.isPackaged` alone (Q1), so an environment variable cannot point
 an installed copy at a dev server; a packaged build has no DevTools, no
 application menu and no reload/DevTools shortcuts (Q2); the main window denies
-pop-ups, away-navigation and `<webview>` attachment and grants only camera
-access (Q7); the hidden print window has no preload (Q4). The Windows exe has
+pop-ups, away-navigation and `<webview>` attachment and opens only camera
+streams, while media checks are granted so device names appear (Q7); the hidden
+print window has no preload (Q4). The Windows exe has
 `RunAsNode`, `NODE_OPTIONS` and `--inspect` fuses off (Q13). Hardening still
 relies on `contextIsolation: true`, `nodeIntegration: false` and the sandbox
 default; **there is still no CSP** (later work). Destructive actions (purge,
@@ -165,7 +166,7 @@ unchanged: they still need no login (R3, out of scope for Q1–Q13).
 | R19 | `backup:restore` swaps the users table under a live session | `electron/ipc/backup.ipc.cjs:114`; the session keeps its `userId`, and `isAdmin` re-reads that id's row in the restored DB | Low | S1 | accepted — restore is admin-guarded and the renderer offers no forced re-login (`src/pages/Settings.tsx`); a restored DB that reuses the id decides the session's new authority |
 | R20 | Sender URL check is a second layer behind the main-frame identity check | `electron/security/senderGuard.cjs`; measured packaged URLs `file:///D:/` and `file:///D:/students` differ from `dist/index.html`, so the policy also allows one flat segment under a drive root | Low | S3 | verify — the packaged build must be smoke-tested with this guard (login, navigation, import, print); fallback if a route URL is ever denied is `HashRouter` |
 | R21 | Production mode was `NODE_ENV === 'development' \|\| !app.isPackaged`, so `NODE_ENV=development` pointed an installed copy at `http://localhost:5173` and opened DevTools | `electron/main.cjs` (S0: the `isDev` line and `openDevTools`) | High | S3 | fixed (Q1, cp2) — `electron/security/runtimeMode.cjs` derives dev only from `app.isPackaged === false`; the dev-server URL and DevTools follow it |
-| R22 | No permission handlers: any renderer page could request the microphone, notifications, display capture or other permissions | `electron/main.cjs` (S0: no `setPermissionRequestHandler`) | Medium | S3 | fixed (Q7, cp5/cp5b) — `electron/security/navGuard.cjs`; request handler grants `media` with `video` only, check handler also tolerates the `unknown` label probe, everything else is denied |
+| R22 | No permission handlers: any renderer page could request the microphone, notifications, display capture or other permissions | `electron/main.cjs` (S0: no `setPermissionRequestHandler`) | Medium | S3 | fixed (Q7, cp5/cp5b, follow-up) — `electron/security/navGuard.cjs`: the request handler grants `media` only with `mediaTypes` exactly `["video"]`; the check handler grants any `media` check, whatever the `mediaType` (missing, `unknown`, `video` or `audio`). **Why:** Chromium hides every device name unless the microphone name check passes, so denying it emptied the camera list as well (measured: `enumerateDevices()` returned a single unnamed entry while the camera feed worked). A check opens no stream, and microphone streams are still blocked by the request handler; the names of microphones and speakers are therefore visible to the app's own page. Every non-media permission stays denied. |
 | R23 | Electron fuses left at defaults: `ELECTRON_RUN_AS_NODE=1` turns the installed exe into a Node shell, and `NODE_OPTIONS` / `--inspect` can inject code into the main process | `package.json` (S0: no `afterPack`, no `electronFuses`) | High | S3 | fixed (Q13, cp6) — `scripts/afterPack.cjs` flips `RunAsNode`, `EnableNodeOptionsEnvironmentVariable` and `EnableNodeCliInspectArguments` off in the Windows exe; needs the installer smoke test (run `ELECTRON_RUN_AS_NODE=1` on the built exe) |
 
 R17 is an integrity issue rather than an attacker-controlled one; it is listed

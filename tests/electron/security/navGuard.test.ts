@@ -127,23 +127,37 @@ describe('decidePermission', () => {
 })
 
 describe('decidePermissionCheck', () => {
-  it('grants the same camera checks the request handler grants', () => {
+  it('grants every media check, whatever the details say', () => {
     expect(decidePermissionCheck({ permission: 'media', details: { mediaType: 'video' } })).toBe(true)
     expect(decidePermissionCheck({ permission: 'media', details: { mediaTypes: ['video'] } })).toBe(true)
-  })
-
-  it('also grants the label/enumeration probe, which opens no stream', () => {
+    // Chromium hides all device names unless the microphone check passes, so an
+    // audio check is granted even though no audio stream can be opened.
+    expect(decidePermissionCheck({ permission: 'media', details: { mediaType: 'audio' } })).toBe(true)
+    expect(decidePermissionCheck({ permission: 'media', details: { mediaTypes: ['audio'] } })).toBe(true)
+    expect(decidePermissionCheck({ permission: 'media', details: { mediaTypes: ['video', 'audio'] } })).toBe(true)
     expect(decidePermissionCheck({ permission: 'media', details: { mediaType: 'unknown' } })).toBe(true)
-    // cp5's request decision is untouched: the probe is still not a request.
-    expect(decidePermission({ permission: 'media', details: { mediaType: 'unknown' } })).toBe(false)
+    // Measured shape of the enumerateDevices label/id check: no mediaType key.
+    expect(
+      decidePermissionCheck({
+        permission: 'media',
+        details: {
+          embeddingOrigin: 'http://localhost:5173',
+          isMainFrame: true,
+          requestingUrl: 'http://localhost:5173/'
+        }
+      })
+    ).toBe(true)
+    expect(decidePermissionCheck({ permission: 'media', details: {} })).toBe(true)
+    expect(decidePermissionCheck({ permission: 'media', details: null })).toBe(true)
   })
 
-  it('still denies audio, in both shapes', () => {
-    expect(decidePermissionCheck({ permission: 'media', details: { mediaType: 'audio' } })).toBe(false)
-    expect(decidePermissionCheck({ permission: 'media', details: { mediaTypes: ['audio'] } })).toBe(false)
-    expect(decidePermissionCheck({ permission: 'media', details: { mediaTypes: ['video', 'audio'] } })).toBe(false)
-    // An array shape never reaches the 'unknown' allowance.
-    expect(decidePermissionCheck({ permission: 'media', details: { mediaTypes: ['unknown'] } })).toBe(false)
+  it('does not weaken the request handler, which stays video-only', () => {
+    expect(decidePermission({ permission: 'media', details: { mediaTypes: ['audio'] } })).toBe(false)
+    expect(decidePermission({ permission: 'media', details: { mediaTypes: ['video', 'audio'] } })).toBe(false)
+    expect(decidePermission({ permission: 'media', details: { mediaType: 'audio' } })).toBe(false)
+    // Neither shape of the label check is a stream request either.
+    expect(decidePermission({ permission: 'media', details: { mediaType: 'unknown' } })).toBe(false)
+    expect(decidePermission({ permission: 'media', details: { requestingUrl: 'http://localhost:5173/' } })).toBe(false)
   })
 
   it('still denies every non-media permission, whatever the details say', () => {
@@ -167,18 +181,17 @@ describe('decidePermissionCheck', () => {
       expect(`${permission}: ${decidePermissionCheck({ permission, details: { mediaType: 'unknown' } })}`).toBe(
         `${permission}: false`
       )
-      expect(`${permission}: ${decidePermissionCheck({ permission, details: { mediaType: 'video' } })}`).toBe(
+      expect(`${permission}: ${decidePermissionCheck({ permission, details: { mediaType: 'audio' } })}`).toBe(
         `${permission}: false`
       )
     }
   })
 
-  it('fails closed on malformed input', () => {
+  it('fails closed on a permission it was not given', () => {
     expect(decidePermissionCheck()).toBe(false)
     expect(decidePermissionCheck({})).toBe(false)
-    expect(decidePermissionCheck({ permission: 'media' })).toBe(false)
-    expect(decidePermissionCheck({ permission: 'media', details: null })).toBe(false)
-    expect(decidePermissionCheck({ permission: 'media', details: { mediaType: 'Unknown' } })).toBe(false)
-    expect(decidePermissionCheck({ permission: 'Media', details: { mediaType: 'unknown' } })).toBe(false)
+    expect(decidePermissionCheck({ permission: 'Media' })).toBe(false)
+    expect(decidePermissionCheck({ permission: 'media ' })).toBe(false)
+    expect(decidePermissionCheck({ permission: { name: 'media' } })).toBe(false)
   })
 })
