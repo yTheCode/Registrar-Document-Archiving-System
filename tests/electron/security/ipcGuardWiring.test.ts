@@ -105,8 +105,15 @@ describe('main.cjs wiring (Q6)', () => {
   })
 
   it('allows the dev origin only when the window is loaded from the dev server', () => {
-    expect(main).toContain('devServerOrigin: usesDevServer ? DEV_SERVER_URL : null')
-    expect(main).toContain('mainWindow.loadURL(DEV_SERVER_URL)')
+    expect(main).toContain("require('./security/runtimeMode.cjs')")
+    expect(main).toContain('resolveRuntimeMode({ isPackaged: app.isPackaged })')
+    expect(main).toContain('devServerOrigin: devServerUrl')
+    expect(main).toContain('mainWindow.loadURL(devServerUrl)')
     expect(main).toContain('mainWindow.loadFile(INDEX_HTML_PATH)')
+  })
+
+  it('does not let the environment choose dev mode (Q1)', () => {
+    expect(main).not.toContain('NODE_ENV')
+    expect(main).not.toContain('usesDevServer')
   })
 })

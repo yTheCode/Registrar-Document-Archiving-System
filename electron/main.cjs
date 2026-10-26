@@ -11,16 +11,19 @@ const { migrateDocumentTypeFolders, migrateToRelativePaths } = require('./servic
 const { registerAllIpc } = require('./ipc/index.cjs');
 const { session } = require('./security/session.cjs');
 const { createSenderGuard, createUrlPolicy } = require('./security/senderGuard.cjs');
+const { resolveRuntimeMode } = require('./security/runtimeMode.cjs');
 
-const DEV_SERVER_URL = 'http://localhost:5173';
 const INDEX_HTML_PATH = path.join(__dirname, '../dist/index.html');
-const usesDevServer = process.env.NODE_ENV === 'development' || !app.isPackaged;
+
+// Q1: production means packaged. This is the only dev/production decision in the
+// process, and it reads nothing from the environment.
+const { isDev, devServerUrl, openDevTools } = resolveRuntimeMode({ isPackaged: app.isPackaged });
 
 // Q6: the only pages allowed to call IPC are the ones this process loads into
 // the main window.
 const isAllowedUrl = createUrlPolicy({
   indexFileUrl: pathToFileURL(INDEX_HTML_PATH).href,
-  devServerOrigin: usesDevServer ? DEV_SERVER_URL : null
+  devServerOrigin: devServerUrl
 });
 
 const validateSender = createSenderGuard({
@@ -52,13 +55,16 @@ function createWindow() {
     session.clear();
   });
 
-  // Load app
-  if (usesDevServer) {
-    mainWindow.loadURL(DEV_SERVER_URL);
-    mainWindow.webContents.openDevTools();
+  // Load app. Only an unpackaged build can reach the dev server; an installed
+  // copy always loads the packaged dist/index.html.
+  if (isDev) {
+    mainWindow.loadURL(devServerUrl);
   } else {
     mainWindow.loadFile(INDEX_HTML_PATH);
   }
+
+  // DevTools follow the same decision.
+  if (openDevTools) mainWindow.webContents.openDevTools();
 }
 
 app.whenReady().then(() => {

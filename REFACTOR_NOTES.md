@@ -1331,3 +1331,20 @@ Follow-ups deliberately deferred until the defense pass is finished.
   CP6 must stop before installing anything. No application code changed.
   Manual check: `git diff --stat` shows only `docs/security/` plus this line; open the file
   and confirm §1 and §5 match `electron/main.cjs:17` and `electron/ipc/files.ipc.cjs:200-228`.
+- **P1B cp2 (2026-10-27)** — Q1: production now means packaged. New pure
+  `electron/security/runtimeMode.cjs` exports `resolveRuntimeMode({ isPackaged })` →
+  `{ isDev, devServerUrl, openDevTools }`, where `isDev` is true **only** for the literal
+  `false` (a missing, null or stringified flag fails closed to production). `main.cjs`
+  drops `NODE_ENV` and `usesDevServer` entirely and destructures the module's result, so the
+  same boolean now feeds `loadURL`, `openDevTools` and the Q6 `devServerOrigin` — previously
+  a packaged exe launched with `NODE_ENV=development` loaded `localhost:5173` and opened
+  DevTools (see `docs/security/p1b-window-analysis.md` §1).
+  `tests/electron/security/ipcGuardWiring.test.ts` pinned the old source strings
+  (`devServerOrigin: usesDevServer ? DEV_SERVER_URL : null`,
+  `mainWindow.loadURL(DEV_SERVER_URL)`); **its second test was updated in this commit** to
+  pin the new wiring plus two negative asserts (`NODE_ENV` and `usesDevServer` must not
+  reappear in `main.cjs`) — same intent (packaged origin null), stronger rule. 7 new tests
+  in `tests/electron/security/runtimeMode.test.ts`.
+  Manual check: `npm run dev` still loads localhost:5173 with DevTools; in a packaged build
+  started with `NODE_ENV=development`, the window shows the app from `dist/index.html` and no
+  DevTools (acceptance item 2).
