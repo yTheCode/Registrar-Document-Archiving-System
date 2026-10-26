@@ -1252,3 +1252,23 @@ Follow-ups deliberately deferred until the defense pass is finished.
   application file changed yet, so nothing in the app behaves differently.
   Manual check: `npx vitest run tests/electron/security` passes; `session.cjs` and
   `adminDecision.cjs` require cleanly in plain Node.
+- **P1A cp3 (2026-10-27)** — Wired Q5 into the app. `services/authz.cjs` `isAdmin(userId)`
+  now returns false unless `session.isCurrentUser(userId)`, then re-reads the users row on
+  every call (`SELECT role, status`) and returns `decideAdmin(...)` — so a deactivated or
+  no-longer-existing admin loses authority immediately and a renderer that sends another
+  account's id is rejected. `auth:login` sets the session on success only (a failed login
+  leaves an existing session alone; a second successful login replaces it). New
+  `auth:logout` clears it. `main.cjs` clears it in the main window's `closed` handler.
+  `preload.js` gained `logout()`, `src/types/electron.d.ts` its `IpcResult` type, and
+  `App.tsx handleLogout` calls it before removing `sessionStorage['user']`. No other
+  handler body changed: CP1 showed none passes the target id to `isAdmin`, so there was
+  nothing to re-point. `backup:restore` is deliberately untouched — the renderer does not
+  force a fresh login after a restore (it only offers to close the app), so the session/id
+  mismatch after a restore is recorded as a residual risk instead of fixed here.
+  Why: register R1/R2 — authorization trusted a renderer-supplied id and there was no
+  main-process session. 10 wiring tests in `tests/electron/security/authWiring.test.ts`
+  read the five sources and pin the wiring (the three modules themselves cannot be
+  required outside Electron; their require chain reaches `paths.cjs`).
+  Manual check: log in as `user`, then in DevTools `await window.electronAPI.getAllUsers(1)`
+  returns `success:false`; as `admin`, `getAllUsers(1)` succeeds and the Users page works;
+  log out and `getAllUsers(1)` fails again.

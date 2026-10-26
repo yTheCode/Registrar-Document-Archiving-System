@@ -94,6 +94,8 @@ export interface BatchInsertDocument {
 export interface ElectronAPI {
   // Authentication
   login(credentials: { username: string; password: string }): Promise<LoginResult>
+  /** Tells the main process to forget the logged-in account (Q5). */
+  logout(): Promise<IpcResult>
 
   // Students
   getAllStudents(opts?: PageOpts): Promise<StudentsResult>

@@ -8,6 +8,7 @@ const { setMainWindow } = require('./window.cjs');
 const { initializeDatabase, closeDatabase } = require('./db/connection.cjs');
 const { migrateDocumentTypeFolders, migrateToRelativePaths } = require('./services/archiveMigrations.cjs');
 const { registerAllIpc } = require('./ipc/index.cjs');
+const { session } = require('./security/session.cjs');
 
 function createWindow() {
   const mainWindow = new BrowserWindow({
@@ -24,6 +25,11 @@ function createWindow() {
     icon: path.join(__dirname, '../src/assets/adzu-seal.png')
   });
   setMainWindow(mainWindow);
+
+  // The app is single-window: once this window goes away nobody is logged in.
+  mainWindow.on('closed', () => {
+    session.clear();
+  });
 
   // Load app
   if (process.env.NODE_ENV === 'development' || !app.isPackaged) {

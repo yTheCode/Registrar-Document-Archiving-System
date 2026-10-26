@@ -41,6 +41,9 @@ function AppInner() {
   }
 
   const handleLogout = () => {
+    // Clear the main-process session first: the renderer's copy is only a UI
+    // convenience, and the admin checks read the main-process session.
+    void window.electronAPI.logout().catch(() => {})
     setUser(null)
     sessionStorage.removeItem('user')
   }
