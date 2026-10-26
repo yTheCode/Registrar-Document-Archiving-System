@@ -1226,3 +1226,93 @@ Follow-ups deliberately deferred until the defense pass is finished.
   Manual check: `git rev-list --objects --all | grep -Ei '\.(db|sqlite|zip|pem|key|env)$'`
   prints nothing, and opening the login page (or `src/pages/Login.tsx`) shows the
   credential block is not DEV-gated.
+- **P1A cp1 (2026-10-27)** — Added `docs/security/p1a-authz-analysis.md`: all 46 IPC
+  channels with their current check, the argument each of the 27 `isAdmin` calls treats
+  as the actor, the actor-vs-target analysis for `users:updateStatus`/`users:delete`
+  (both already correct — no handler body needs re-pointing), proof that `isAdmin` never
+  checks `status` so a deactivated admin keeps authority, the login/storage/logout map
+  (`sessionStorage['user']`, one logout path in `App.tsx:43`), the single-main-window
+  answer plus the hidden print window that also gets the preload, and the 18 unguarded
+  channels (listed only). Why: Q5/Q6 must be based on verified current code, and the
+  "36 admin handlers" figure in the phase prompt is not reproducible — the real split is
+  46 / 27 / 1 public / 18 unguarded. No application code changed.
+  Manual check: `git diff --stat` shows only `docs/security/` plus this line; the cited
+  `file:line` pairs in the document open on `security/p1a-identity`.
+- **P1A cp2 (2026-10-27)** — Added the two pure modules Q5 is built on:
+  `electron/security/session.cjs` (factory `createSession()` with `get`/`set`/`clear`/
+  `isCurrentUser`, plus the single shared `session` instance the main process uses; no
+  electron or db import) and `electron/security/adminDecision.cjs`
+  (`decideAdmin({ session, userId, row })` → true only for a live session whose
+  `userId` equals the argument, compared by value so `1` and `"1"` are the same account,
+  and a row that is `role === 'admin'` **and** `status === 'active'`). `set()` stores a
+  snapshot and `get()` returns a copy, so a mutated login result or a mutation of the
+  returned object cannot change the session. Why: Q5 needs the decision to be testable
+  without electron, a db handle or a real login, and the register's R1 evidence showed
+  `isAdmin` never reads `status`. 20 new tests in `tests/electron/security/`; no
+  application file changed yet, so nothing in the app behaves differently.
+  Manual check: `npx vitest run tests/electron/security` passes; `session.cjs` and
+  `adminDecision.cjs` require cleanly in plain Node.
+- **P1A cp3 (2026-10-27)** — Wired Q5 into the app. `services/authz.cjs` `isAdmin(userId)`
+  now returns false unless `session.isCurrentUser(userId)`, then re-reads the users row on
+  every call (`SELECT role, status`) and returns `decideAdmin(...)` — so a deactivated or
+  no-longer-existing admin loses authority immediately and a renderer that sends another
+  account's id is rejected. `auth:login` sets the session on success only (a failed login
+  leaves an existing session alone; a second successful login replaces it). New
+  `auth:logout` clears it. `main.cjs` clears it in the main window's `closed` handler.
+  `preload.js` gained `logout()`, `src/types/electron.d.ts` its `IpcResult` type, and
+  `App.tsx handleLogout` calls it before removing `sessionStorage['user']`. No other
+  handler body changed: CP1 showed none passes the target id to `isAdmin`, so there was
+  nothing to re-point. `backup:restore` is deliberately untouched — the renderer does not
+  force a fresh login after a restore (it only offers to close the app), so the session/id
+  mismatch after a restore is recorded as a residual risk instead of fixed here.
+  Why: register R1/R2 — authorization trusted a renderer-supplied id and there was no
+  main-process session. 10 wiring tests in `tests/electron/security/authWiring.test.ts`
+  read the five sources and pin the wiring (the three modules themselves cannot be
+  required outside Electron; their require chain reaches `paths.cjs`).
+  Manual check: log in as `user`, then in DevTools `await window.electronAPI.getAllUsers(1)`
+  returns `success:false`; as `admin`, `getAllUsers(1)` succeeds and the Users page works;
+  log out and `getAllUsers(1)` fails again.
+- **P1A cp4 (2026-10-27)** — Added Q6. `electron/security/senderGuard.cjs` is pure (no
+  electron or paths import): `createSenderGuard({ getMainWebContents, isAllowedUrl })`
+  accepts an event only when `event.sender` is the main window's webContents, its
+  `senderFrame` is that webContents' main frame (identity, with a `frameTreeNodeId`
+  fallback so a fresh frame wrapper still matches), the frame URL passes the policy, and
+  nothing throws. `createUrlPolicy({ indexFileUrl, devServerOrigin })` allows the packaged
+  `dist/index.html` file URL plus the flat route URLs BrowserRouter pushes onto a file://
+  document, and the Vite origin only when `main.cjs` says the window is loaded from it; it
+  denies everything if no valid index URL is supplied. `ipc/index.cjs` swaps
+  `ipcMain.handle` for a guarded version once around the 14 requires and restores it in
+  `finally`, so all 46 channels return `{ success: false, error: 'Permission denied' }`
+  before their own body runs; no handler module changed. `main.cjs` builds both and passes
+  `registerAllIpc({ validateSender })`.
+  Why: register R3 — any frame that could reach `ipcRenderer` was served. The URL rule is
+  wider than the phase prompt's "the packaged index.html file URL" because that URL exists
+  only on first paint: in the packaged build the router rewrites it to `file:///D:/` and
+  then `file:///D:/students` (measured), so an exact match would deny every IPC call after
+  login. Route URLs are therefore matched as one segment under a drive root, no dot or
+  colon; a real local file page carries a directory path and is denied.
+  23 unit tests (`senderGuard.test.ts`, `urlPolicy.test.ts`) plus an Electron run against
+  the real preload and the 46 registered channels: allowed from index.html and from
+  `file:///D:/students`, denied from another window on a local `evil.html` and after the
+  main window was cleared, and `ipcMain.handle` compares identical before/after.
+  Manual check: run the app, open DevTools, confirm login/search/import work and
+  `getAllUsers` still answers; the print preview window (native print dialog) still opens.
+- **P1A cp5 (2026-10-27)** — Closed out Q6's coverage rule and the register.
+  `tests/electron/security/ipcGuardWiring.test.ts` (9 tests) reads the sources and fails if an
+  `*.ipc.cjs` module is not required exactly once by `electron/ipc/index.cjs`, if the guarded
+  `ipcMain.handle` is installed after the first require or not restored after the last, if any
+  file outside `electron/ipc` registers a handler or requires a handler module, if a channel
+  name repeats (47 today), or if `main.cjs` stops passing `validateSender`. Proven non-vacuous:
+  a planted `electron/ipc/zz-rogue.ipc.cjs` failed two tests and a planted `electron/zz-rogue.cjs`
+  with a bare `ipcMain.handle` failed the outside-registration test; both files were deleted.
+  `docs/SECURITY_REGISTER.md`: §4/§5 mitigation text updated, R1 and R2 marked fixed (Q5), R3
+  marked narrowed but open (Q6 does not add login to those channels), and R18–R20 recorded as
+  residual risks — renderer reload keeps the main-process session, `backup:restore` swaps the
+  users table under a live session, and the sender URL check sits behind the main-frame
+  identity check with the packaged route-URL allowance measured rather than specified.
+  Per your decision the URL policy stays as implemented and HashRouter is not adopted in this
+  phase; the register names HashRouter as the fallback if a packaged route URL is ever denied.
+  Why: a guard that one module can opt out of is not a guard, and the register must not keep
+  claiming no session exists.
+  Manual check: `npx vitest run tests/electron/security/ipcGuardWiring.test.ts` passes; add a
+  throwaway `electron/ipc/zz.ipc.cjs` with one `ipcMain.handle` and watch it fail.

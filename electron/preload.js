@@ -5,6 +5,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
   // Authentication
   login: (credentials) => ipcRenderer.invoke('auth:login', credentials),
+  logout: () => ipcRenderer.invoke('auth:logout'),
 
   // Students
   getAllStudents: (opts) => ipcRenderer.invoke('students:getAll', opts),

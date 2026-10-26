@@ -4,6 +4,9 @@ Tracks the security phase (S0–S6, see `HANDOFF.md` §11). One row per risk. Ev
 finding below was checked against the code on branch `security/s0-baseline`
 (commit `7d285f0`, equal to `origin/main`), not against the older snapshot
 `04cba01` the original review used. Line numbers are for that commit.
+Rows marked Q5/Q6 and R18–R20 were added on `security/p1a-identity` (Phase 1A);
+for those, treat a cited `file:line` as the S0 location and rely on the named
+symbols for the current one.
 
 Status values: `open` · `fixed` · `accepted` (risk accepted, documented) ·
 `verify` (needs a hands-on or version check before it can be closed).
@@ -78,21 +81,28 @@ no inbound network surface).
 | T11 | Disk or backup stolen | Plaintext student data | S6 |
 
 **Current mitigation shape.** Authorization is a per-handler `isAdmin(userId)`
-lookup with a renderer-supplied id. Path containment is string-based
-(`path.resolve` + `path.relative`). Hardening relies on
-`contextIsolation: true`, `nodeIntegration: false` and the sandbox default; there
-is no CSP and no navigation guard. Destructive actions (purge, delete, restore)
-rely on the UI for confirmation, except archive purge, which re-checks the
-password in main.
+that must match the main-process session and re-reads the account's
+`role`/`status` (Q5), and every handler registered through
+`electron/ipc/index.cjs` first checks that the call comes from the main
+window's main frame on an allowed page (Q6). Path containment is string-based
+(`path.resolve` + `path.relative`). Hardening relies on `contextIsolation:
+true`, `nodeIntegration: false` and the sandbox default; there is still no CSP
+and no `will-navigate`/`setWindowOpenHandler` guard. Destructive actions
+(purge, delete, restore) rely on the UI for confirmation, except archive purge,
+which re-checks the password in main.
 
 ## 5. IPC authorization inventory (verified)
 
+Inventory below describes the S0 baseline; it was re-verified channel by channel
+in `docs/security/p1a-authz-analysis.md` and the Q5/Q6 changes are summarised at
+the end of this section.
+
 - 46 `ipcMain.handle` channels; 46 methods in `electron/preload.js`.
 - 27 channels call `isAdmin(...)`; 19 do not.
-- **No main-process session exists.** `auth:login` (`electron/ipc/auth.ipc.cjs:8`)
+- **At S0 no main-process session existed.** `auth:login` (`electron/ipc/auth.ipc.cjs:8`)
   returns `{ id, username, role }`; the renderer stores it in `sessionStorage`.
-  Every admin check trusts a `userId`/`createdBy`/`updatedBy`/`deletedBy`
-  argument, so any renderer can present any account id.
+  Every admin check trusted a `userId`/`createdBy`/`updatedBy`/`deletedBy`
+  argument, so any renderer could present any account id.
 
 Unguarded channels (18, excluding `auth:login` which must stay public):
 
@@ -108,16 +118,28 @@ Unguarded channels (18, excluding `auth:login` which must stay public):
 | `folders:generatePath` | `electron/ipc/folders.ipc.cjs:11` | Directory creation |
 | `dialog:openFile`, `dialog:openDirectory` | `electron/ipc/dialogs.ipc.cjs:9,19` | User-driven dialogs |
 
-Guarded channels still accept the actor id from the renderer, so they are only
-as strong as T1 allows.
+Guarded channels still accept the actor id from the renderer, so at S0 they were
+only as strong as T1 allowed.
+
+**After Q5/Q6 (P1A, branch `security/p1a-identity`).** 47 channels now: 27
+admin-guarded, 2 session-only (`auth:login`, `auth:logout`) and the 18 above.
+Q5 added `electron/security/session.cjs`; `auth:login` sets it on success,
+`auth:logout` and the main window's `closed` event clear it, and `isAdmin`
+returns true only when the argument equals the session's user *and* the re-read
+row is an active admin (`electron/services/authz.cjs`). Q6 wraps `ipcMain.handle`
+once in `electron/ipc/index.cjs`, so every channel runs the sender guard
+(`electron/security/senderGuard.cjs`) first and returns
+`{ success: false, error: 'Permission denied' }` unless the call comes from the
+main window's main frame on an allowed page. The 18 unguarded channels are
+unchanged: they still need no login (R3, out of scope for Q1–Q13).
 
 ## 6. Risk register
 
 | ID | Risk | Verified evidence | Sev | Phase | Status |
 | --- | --- | --- | --- | --- | --- |
-| R1 | Admin checks trust a renderer-supplied id | `electron/services/authz.cjs:6-10`; 27 call sites across `electron/ipc/*` | Critical | S1 | open |
-| R2 | No main-process session; login is a renderer-side fact | `electron/ipc/auth.ipc.cjs:8-37`; `src/App.tsx:31,40,45` (sessionStorage) | High | S1 | open |
-| R3 | 18 data/file channels need no login | table in §5 | High | S1 | open |
+| R1 | Admin checks trust a renderer-supplied id | `electron/services/authz.cjs:6-10`; 27 call sites across `electron/ipc/*` | Critical | S1 | fixed (Q5, cp3) — `isAdmin` now requires `session.isCurrentUser(userId)` and re-reads `role, status` |
+| R2 | No main-process session; login is a renderer-side fact | `electron/ipc/auth.ipc.cjs:8-37`; `src/App.tsx:31,40,45` (sessionStorage) | High | S1 | fixed (Q5, cp3) — session set on login, cleared on logout/window close; residual R18 |
+| R3 | 18 data/file channels need no login | table in §5 | High | S1 | open — Q6 limits them to the app's own window page, but they still require no login |
 | R4 | Default accounts seeded at first run and printed on the login screen (and in the README) | `electron/db/connection.cjs:117-134`; `src/pages/Login.tsx:210-219`; `README.md:754-759` | High | S1 | open |
 | R5 | No login throttling or lockout; synchronous bcrypt compare | `electron/ipc/auth.ipc.cjs:16` | Medium | S1 | open |
 | R6 | `file:copy` validates only the destination; `sourcePath` may be any local file, then `file:readAsBase64` reads it back | `electron/ipc/files.ipc.cjs:13-33` (copy at :32) | High | S2 | open |
@@ -132,6 +154,9 @@ as strong as T1 allows.
 | R15 | Electron 28.3.3 (out of support) and 27 unresolved npm advisories | §7 below; `package.json` (`electron ^28.1.0`) | High | S5 | open |
 | R16 | Archive data is plaintext on disk and in backups | `electron/db/connection.cjs:41`; backup ZIP has no password | Medium | S6 | open |
 | R17 | Archive-root fallback differs: `getArchiveRoot()` → `Documents/ADZU_Archive`, DB init/`resolveArchiveDir` → `userData/Archive` | `electron/services/archivePaths.cjs:30`; `electron/db/connection.cjs:163`; `electron/services/backup.cjs:27` | Low | S2 | open |
+| R18 | A renderer reload (Ctrl+R, crash recovery) drops `sessionStorage` but not the main-process session | `electron/security/session.cjs`; `auth:logout` and the window `closed` event are the only clears (`electron/ipc/auth.ipc.cjs`, `electron/main.cjs`) | Low | S1 | accepted — the UI shows the login screen while the window stays authorized for the previous user; reaching a guarded channel then needs renderer code execution |
+| R19 | `backup:restore` swaps the users table under a live session | `electron/ipc/backup.ipc.cjs:114`; the session keeps its `userId`, and `isAdmin` re-reads that id's row in the restored DB | Low | S1 | accepted — restore is admin-guarded and the renderer offers no forced re-login (`src/pages/Settings.tsx`); a restored DB that reuses the id decides the session's new authority |
+| R20 | Sender URL check is a second layer behind the main-frame identity check | `electron/security/senderGuard.cjs`; measured packaged URLs `file:///D:/` and `file:///D:/students` differ from `dist/index.html`, so the policy also allows one flat segment under a drive root | Low | S3 | verify — the packaged build must be smoke-tested with this guard (login, navigation, import, print); fallback if a route URL is ever denied is `HashRouter` |
 
 R17 is an integrity issue rather than an attacker-controlled one; it is listed
 because a missing setting silently splits reads from backup paths.
@@ -256,3 +281,8 @@ GitHub.
 | 2026-10-26 | S0 cp1 | Created this register: S0 baseline, threat model, verified IPC inventory, 17 risks, HANDOFF corrections. No application code changed. |
 | 2026-10-26 | S0 cp2 | npm audit triage (§7): 27 advisories, only Electron and the router reach the installer, all fixes are major bumps deferred to S5. No dependency changed. |
 | 2026-10-26 | S0 cp3 | Git history and secret check (§8): no committed database, archive, student data, key or token file; no secret pattern in 158 blobs; no unreachable objects. Found default credentials printed on the login screen (recorded under R4). Read-only; no code or history changed. |
+| 2026-10-27 | P1A cp1 | Channel-by-channel authorization inventory on `security/p1a-identity` (`docs/security/p1a-authz-analysis.md`): 46 channels, 27 admin-guarded, actor argument per call site located, `users:updateStatus`/`users:delete` confirmed to guard the actor rather than the target, login/renderer-storage/logout map, single main window confirmed. Analysis only; no app code changed. |
+| 2026-10-27 | P1A cp2 | Added pure `electron/security/session.cjs` and `adminDecision.cjs` with 20 tests. No app behaviour changed yet. |
+| 2026-10-27 | P1A cp3 | Q5 wired: session set on login, cleared on `auth:logout` and window close; `isAdmin` requires the session and re-reads `role, status`. R1 and R2 fixed; R18 (reload) and R19 (`backup:restore`) recorded as accepted residual risks rather than changed, per instruction. |
+| 2026-10-27 | P1A cp4 | Q6 wired: `electron/security/senderGuard.cjs` plus one guarded `ipcMain.handle` swap in `electron/ipc/index.cjs`. R20 recorded: the packaged route URLs measured in a real window (`file:///D:/`, `file:///D:/students`) do not equal `dist/index.html`, so the URL policy allows one flat segment under a drive root; HashRouter is the fallback if a route URL is ever denied. |
+| 2026-10-27 | P1A cp5 | Added `tests/electron/security/ipcGuardWiring.test.ts` (9 tests) pinning the wrapper: every `*.ipc.cjs` is required exactly once by `ipc/index.cjs`, the guard is installed before the first require and restored after the last, no handler is registered outside `electron/ipc`, channel names are unique (47), and `main.cjs` passes the guard. Proven non-vacuous with a planted rogue module and a planted handler outside `electron/ipc`. This register updated: §4/§5 mitigation text, R1/R2 fixed, R3 narrowed, R18–R20 added. |
