@@ -1,14 +1,35 @@
 const { app, BrowserWindow, dialog } = require('electron');
 const path = require('path');
+const { pathToFileURL } = require('url');
 
 // paths.cjs must be required first: its import-time side effects (database
 // folder creation, legacy database copy) previously ran here at module load.
 const { dbPath } = require('./paths.cjs');
-const { setMainWindow } = require('./window.cjs');
+const { setMainWindow, getMainWindow } = require('./window.cjs');
 const { initializeDatabase, closeDatabase } = require('./db/connection.cjs');
 const { migrateDocumentTypeFolders, migrateToRelativePaths } = require('./services/archiveMigrations.cjs');
 const { registerAllIpc } = require('./ipc/index.cjs');
 const { session } = require('./security/session.cjs');
+const { createSenderGuard, createUrlPolicy } = require('./security/senderGuard.cjs');
+
+const DEV_SERVER_URL = 'http://localhost:5173';
+const INDEX_HTML_PATH = path.join(__dirname, '../dist/index.html');
+const usesDevServer = process.env.NODE_ENV === 'development' || !app.isPackaged;
+
+// Q6: the only pages allowed to call IPC are the ones this process loads into
+// the main window.
+const isAllowedUrl = createUrlPolicy({
+  indexFileUrl: pathToFileURL(INDEX_HTML_PATH).href,
+  devServerOrigin: usesDevServer ? DEV_SERVER_URL : null
+});
+
+const validateSender = createSenderGuard({
+  getMainWebContents: () => {
+    const win = getMainWindow();
+    return win && !win.isDestroyed() ? win.webContents : null;
+  },
+  isAllowedUrl
+});
 
 function createWindow() {
   const mainWindow = new BrowserWindow({
@@ -32,11 +53,11 @@ function createWindow() {
   });
 
   // Load app
-  if (process.env.NODE_ENV === 'development' || !app.isPackaged) {
-    mainWindow.loadURL('http://localhost:5173');
+  if (usesDevServer) {
+    mainWindow.loadURL(DEV_SERVER_URL);
     mainWindow.webContents.openDevTools();
   } else {
-    mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+    mainWindow.loadFile(INDEX_HTML_PATH);
   }
 }
 
@@ -83,4 +104,4 @@ app.on('window-all-closed', () => {
   }
 });
 
-registerAllIpc();
+registerAllIpc({ validateSender });

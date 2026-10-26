@@ -1272,3 +1272,28 @@ Follow-ups deliberately deferred until the defense pass is finished.
   Manual check: log in as `user`, then in DevTools `await window.electronAPI.getAllUsers(1)`
   returns `success:false`; as `admin`, `getAllUsers(1)` succeeds and the Users page works;
   log out and `getAllUsers(1)` fails again.
+- **P1A cp4 (2026-10-27)** — Added Q6. `electron/security/senderGuard.cjs` is pure (no
+  electron or paths import): `createSenderGuard({ getMainWebContents, isAllowedUrl })`
+  accepts an event only when `event.sender` is the main window's webContents, its
+  `senderFrame` is that webContents' main frame (identity, with a `frameTreeNodeId`
+  fallback so a fresh frame wrapper still matches), the frame URL passes the policy, and
+  nothing throws. `createUrlPolicy({ indexFileUrl, devServerOrigin })` allows the packaged
+  `dist/index.html` file URL plus the flat route URLs BrowserRouter pushes onto a file://
+  document, and the Vite origin only when `main.cjs` says the window is loaded from it; it
+  denies everything if no valid index URL is supplied. `ipc/index.cjs` swaps
+  `ipcMain.handle` for a guarded version once around the 14 requires and restores it in
+  `finally`, so all 46 channels return `{ success: false, error: 'Permission denied' }`
+  before their own body runs; no handler module changed. `main.cjs` builds both and passes
+  `registerAllIpc({ validateSender })`.
+  Why: register R3 — any frame that could reach `ipcRenderer` was served. The URL rule is
+  wider than the phase prompt's "the packaged index.html file URL" because that URL exists
+  only on first paint: in the packaged build the router rewrites it to `file:///D:/` and
+  then `file:///D:/students` (measured), so an exact match would deny every IPC call after
+  login. Route URLs are therefore matched as one segment under a drive root, no dot or
+  colon; a real local file page carries a directory path and is denied.
+  23 unit tests (`senderGuard.test.ts`, `urlPolicy.test.ts`) plus an Electron run against
+  the real preload and the 46 registered channels: allowed from index.html and from
+  `file:///D:/students`, denied from another window on a local `evil.html` and after the
+  main window was cleared, and `ipcMain.handle` compares identical before/after.
+  Manual check: run the app, open DevTools, confirm login/search/import work and
+  `getAllUsers` still answers; the print preview window (native print dialog) still opens.
