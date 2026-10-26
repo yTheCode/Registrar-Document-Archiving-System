@@ -13,7 +13,7 @@ const { session } = require('./security/session.cjs');
 const { createSenderGuard, createUrlPolicy } = require('./security/senderGuard.cjs');
 const { resolveRuntimeMode } = require('./security/runtimeMode.cjs');
 const { isBlockedShortcut } = require('./security/blockedKeys.cjs');
-const { DENY_WINDOW_OPEN, decideNavigation, decidePermission } = require('./security/navGuard.cjs');
+const { DENY_WINDOW_OPEN, decideNavigation, decidePermission, decidePermissionCheck } = require('./security/navGuard.cjs');
 
 const INDEX_HTML_PATH = path.join(__dirname, '../dist/index.html');
 
@@ -76,7 +76,7 @@ function createWindow() {
     callback(webContents === mainWindow.webContents && decidePermission({ permission, details }));
   });
   mainSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
-    return webContents === mainWindow.webContents && decidePermission({ permission, details });
+    return webContents === mainWindow.webContents && decidePermissionCheck({ permission, details });
   });
 
   // The app is single-window: once this window goes away nobody is logged in.

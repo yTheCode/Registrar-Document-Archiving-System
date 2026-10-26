@@ -29,13 +29,16 @@ describe('navigation, pop-up and permission wiring (Q7)', () => {
     expect(createWindow()).toContain("mainWindow.webContents.on('will-attach-webview', event => event.preventDefault())")
   })
 
-  it('answers both permission handlers from the pure decision, for the main window only', () => {
+  it('answers both permission handlers from the pure decisions, for the main window only', () => {
     const body = createWindow()
     expect(body).toContain('setPermissionRequestHandler(')
     expect(body).toContain('setPermissionCheckHandler(')
+    // Requests stay video-only; checks also allow Chromium's label probe.
     expect(body).toContain('webContents === mainWindow.webContents && decidePermission({ permission, details })')
-    // Both call sites must be guarded: an unguarded grant would be a one-line regression.
-    expect(body.match(/decidePermission\(\{ permission, details \}\)/g)).toHaveLength(2)
+    expect(body).toContain('webContents === mainWindow.webContents && decidePermissionCheck({ permission, details })')
+    // One call site each: either handler drifting to the other decision is a regression.
+    expect(body.match(/decidePermission\(\{ permission, details \}\)/g)).toHaveLength(1)
+    expect(body.match(/decidePermissionCheck\(\{ permission, details \}\)/g)).toHaveLength(1)
   })
 
   it('installs the Q7 handlers on the main window, not a second one', () => {

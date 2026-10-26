@@ -1409,3 +1409,16 @@ Follow-ups deliberately deferred until the defense pass is finished.
   wiring tests in `tests/electron/security/navGuardWiring.test.ts`.
   Manual check: packaged app — a link or `window.open` to an outside site does nothing, and
   scanning still finds and previews the camera; dev — same, plus DevTools still opens.
+- **P1B cp5b (2026-10-27)** — Supersedes cp5's trade-off above: the permission **check**
+  handler now allows `permission: 'media'` with `mediaType: 'unknown'` as well as `'video'`.
+  New `decidePermissionCheck` in `electron/security/navGuard.cjs` delegates to
+  `decidePermission` first and only then adds the single string case, so the **request**
+  handler is untouched (still video-only) and audio stays denied in both shapes; an array
+  shape never reaches the allowance. Why: Chromium probes the check handler with 'unknown'
+  when it only needs device labels, and denying it hid camera names — the probe opens no
+  stream, so this is not a weaker camera rule. `main.cjs`'s check handler now calls
+  `decidePermissionCheck`; 5 new tests in `navGuard.test.ts` (including that audio and the
+  other 13 permissions are still denied and that requests still reject 'unknown') and
+  `navGuardWiring.test.ts` was updated to pin one call site per decision.
+  Manual check: camera dropdown shows real device names; microphone-only requests and
+  notifications still fail.

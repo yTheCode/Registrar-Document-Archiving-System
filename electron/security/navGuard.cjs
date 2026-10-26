@@ -54,4 +54,24 @@ function decidePermission(options) {
   return false;
 }
 
-module.exports = { DENY_WINDOW_OPEN, decideNavigation, decidePermission };
+/**
+ * The permission *check* handler asks a weaker question than the request
+ * handler: "may this page see the camera at all?". Chromium probes it with
+ * `mediaType: 'unknown'` when it only needs device labels, which grants no
+ * stream — allowing it keeps camera names in the picker. Requests stay
+ * video-only through `decidePermission`, so audio is still denied everywhere.
+ *
+ * @param {{ permission?: unknown, details?: unknown }} options
+ * @returns {boolean}
+ */
+function decidePermissionCheck(options) {
+  if (decidePermission(options)) return true;
+
+  const { permission, details } = options || {};
+  if (permission !== 'media') return false;
+
+  const info = details && typeof details === 'object' ? details : {};
+  return !Array.isArray(info.mediaTypes) && info.mediaType === 'unknown';
+}
+
+module.exports = { DENY_WINDOW_OPEN, decideNavigation, decidePermission, decidePermissionCheck };

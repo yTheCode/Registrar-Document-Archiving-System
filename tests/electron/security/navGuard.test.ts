@@ -2,10 +2,13 @@ import { createRequire } from 'module'
 import { describe, expect, it, vi } from 'vitest'
 
 const require = createRequire(import.meta.url)
-const { DENY_WINDOW_OPEN, decideNavigation, decidePermission } = require('../../../electron/security/navGuard.cjs') as {
+const { DENY_WINDOW_OPEN, decideNavigation, decidePermission, decidePermissionCheck } = require(
+  '../../../electron/security/navGuard.cjs'
+) as {
   DENY_WINDOW_OPEN: { action: string }
   decideNavigation: (options?: unknown) => boolean
   decidePermission: (options?: unknown) => boolean
+  decidePermissionCheck: (options?: unknown) => boolean
 }
 const { createUrlPolicy } = require('../../../electron/security/senderGuard.cjs') as {
   createUrlPolicy: (options: { indexFileUrl: string; devServerOrigin: string | null }) => (url: unknown) => boolean
@@ -120,5 +123,62 @@ describe('decidePermission', () => {
     expect(decidePermission({ permission: 'Media', details: { mediaTypes: ['video'] } })).toBe(false)
     expect(decidePermission({ permission: { name: 'media' }, details: { mediaTypes: ['video'] } })).toBe(false)
     expect(decidePermission({ permission: 'media', details: { mediaTypes: 'video' } })).toBe(false)
+  })
+})
+
+describe('decidePermissionCheck', () => {
+  it('grants the same camera checks the request handler grants', () => {
+    expect(decidePermissionCheck({ permission: 'media', details: { mediaType: 'video' } })).toBe(true)
+    expect(decidePermissionCheck({ permission: 'media', details: { mediaTypes: ['video'] } })).toBe(true)
+  })
+
+  it('also grants the label/enumeration probe, which opens no stream', () => {
+    expect(decidePermissionCheck({ permission: 'media', details: { mediaType: 'unknown' } })).toBe(true)
+    // cp5's request decision is untouched: the probe is still not a request.
+    expect(decidePermission({ permission: 'media', details: { mediaType: 'unknown' } })).toBe(false)
+  })
+
+  it('still denies audio, in both shapes', () => {
+    expect(decidePermissionCheck({ permission: 'media', details: { mediaType: 'audio' } })).toBe(false)
+    expect(decidePermissionCheck({ permission: 'media', details: { mediaTypes: ['audio'] } })).toBe(false)
+    expect(decidePermissionCheck({ permission: 'media', details: { mediaTypes: ['video', 'audio'] } })).toBe(false)
+    // An array shape never reaches the 'unknown' allowance.
+    expect(decidePermissionCheck({ permission: 'media', details: { mediaTypes: ['unknown'] } })).toBe(false)
+  })
+
+  it('still denies every non-media permission, whatever the details say', () => {
+    const others = [
+      'notifications',
+      'clipboard-read',
+      'clipboard-sanitized-write',
+      'geolocation',
+      'display-capture',
+      'midi',
+      'midiSysex',
+      'openExternal',
+      'pointerLock',
+      'fullscreen',
+      'serial',
+      'usb',
+      'hid',
+      'unknown'
+    ]
+    for (const permission of others) {
+      expect(`${permission}: ${decidePermissionCheck({ permission, details: { mediaType: 'unknown' } })}`).toBe(
+        `${permission}: false`
+      )
+      expect(`${permission}: ${decidePermissionCheck({ permission, details: { mediaType: 'video' } })}`).toBe(
+        `${permission}: false`
+      )
+    }
+  })
+
+  it('fails closed on malformed input', () => {
+    expect(decidePermissionCheck()).toBe(false)
+    expect(decidePermissionCheck({})).toBe(false)
+    expect(decidePermissionCheck({ permission: 'media' })).toBe(false)
+    expect(decidePermissionCheck({ permission: 'media', details: null })).toBe(false)
+    expect(decidePermissionCheck({ permission: 'media', details: { mediaType: 'Unknown' } })).toBe(false)
+    expect(decidePermissionCheck({ permission: 'Media', details: { mediaType: 'unknown' } })).toBe(false)
   })
 })
