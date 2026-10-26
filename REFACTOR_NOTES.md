@@ -1226,3 +1226,15 @@ Follow-ups deliberately deferred until the defense pass is finished.
   Manual check: `git rev-list --objects --all | grep -Ei '\.(db|sqlite|zip|pem|key|env)$'`
   prints nothing, and opening the login page (or `src/pages/Login.tsx`) shows the
   credential block is not DEV-gated.
+- **P1A cp1 (2026-10-27)** — Added `docs/security/p1a-authz-analysis.md`: all 46 IPC
+  channels with their current check, the argument each of the 27 `isAdmin` calls treats
+  as the actor, the actor-vs-target analysis for `users:updateStatus`/`users:delete`
+  (both already correct — no handler body needs re-pointing), proof that `isAdmin` never
+  checks `status` so a deactivated admin keeps authority, the login/storage/logout map
+  (`sessionStorage['user']`, one logout path in `App.tsx:43`), the single-main-window
+  answer plus the hidden print window that also gets the preload, and the 18 unguarded
+  channels (listed only). Why: Q5/Q6 must be based on verified current code, and the
+  "36 admin handlers" figure in the phase prompt is not reproducible — the real split is
+  46 / 27 / 1 public / 18 unguarded. No application code changed.
+  Manual check: `git diff --stat` shows only `docs/security/` plus this line; the cited
+  `file:line` pairs in the document open on `security/p1a-identity`.
