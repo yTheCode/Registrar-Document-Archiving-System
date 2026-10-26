@@ -5,8 +5,9 @@ finding below was checked against the code on branch `security/s0-baseline`
 (commit `7d285f0`, equal to `origin/main`), not against the older snapshot
 `04cba01` the original review used. Line numbers are for that commit.
 Rows marked Q5/Q6 and R18–R20 were added on `security/p1a-identity` (Phase 1A);
-for those, treat a cited `file:line` as the S0 location and rely on the named
-symbols for the current one.
+R21–R23 and the Q1/Q2/Q4/Q7/Q13 statuses were updated on
+`security/p1b-electron-hardening` (Phase 1B). For those, treat a cited
+`file:line` as the S0 location and rely on the named symbols for the current one.
 
 Status values: `open` · `fixed` · `accepted` (risk accepted, documented) ·
 `verify` (needs a hands-on or version check before it can be closed).
@@ -85,11 +86,17 @@ that must match the main-process session and re-reads the account's
 `role`/`status` (Q5), and every handler registered through
 `electron/ipc/index.cjs` first checks that the call comes from the main
 window's main frame on an allowed page (Q6). Path containment is string-based
-(`path.resolve` + `path.relative`). Hardening relies on `contextIsolation:
-true`, `nodeIntegration: false` and the sandbox default; there is still no CSP
-and no `will-navigate`/`setWindowOpenHandler` guard. Destructive actions
-(purge, delete, restore) rely on the UI for confirmation, except archive purge,
-which re-checks the password in main.
+(`path.resolve` + `path.relative`). Process hardening: the runtime mode is
+decided by `app.isPackaged` alone (Q1), so an environment variable cannot point
+an installed copy at a dev server; a packaged build has no DevTools, no
+application menu and no reload/DevTools shortcuts (Q2); the main window denies
+pop-ups, away-navigation and `<webview>` attachment and grants only camera
+access (Q7); the hidden print window has no preload (Q4). The Windows exe has
+`RunAsNode`, `NODE_OPTIONS` and `--inspect` fuses off (Q13). Hardening still
+relies on `contextIsolation: true`, `nodeIntegration: false` and the sandbox
+default; **there is still no CSP** (later work). Destructive actions (purge,
+delete, restore) rely on the UI for confirmation, except archive purge, which
+re-checks the password in main.
 
 ## 5. IPC authorization inventory (verified)
 
@@ -147,8 +154,8 @@ unchanged: they still need no login (R3, out of scope for Q1–Q13).
 | R8 | No extension allowlist on open/import: `openExternal`, `print` and `exportCopy` will hand any stored file to the OS handler | `electron/ipc/files.ipc.cjs:52,193,286` | Medium | S3 | open |
 | R9 | No size or type limits on base64 IPC (`readAsBase64` reads whole files; `image:saveBase64` decodes any length) | `electron/ipc/files.ipc.cjs:91`; `electron/ipc/images.ipc.cjs:31` | Medium | S2 | open |
 | R10 | Audit entries are written from renderer-driven handlers with a renderer-supplied actor and free-text action; `logs:add` accepts any `action` | `electron/ipc/logs.ipc.cjs:8-17` | Medium | S4 | open |
-| R11 | No CSP in `index.html`; no `will-navigate` / `setWindowOpenHandler`; DevTools open whenever the app is unpackaged | `index.html:1-12`; `electron/main.cjs:29-34` | Medium | S3 | open |
-| R12 | Print window loads the app preload (`PRELOAD_PATH`) into a generated temp HTML file | `electron/ipc/files.ipc.cjs:218-228` | Low | S3 | open |
+| R11 | No CSP in `index.html`; no `will-navigate` / `setWindowOpenHandler`; DevTools open whenever the app is unpackaged | `index.html:1-12`; `electron/main.cjs:29-34` | Medium | S3 | fixed in part (Q2 cp3, Q7 cp5) — a packaged build has no DevTools, no menu and no DevTools/reload shortcuts, and the main window denies pop-ups, away-navigation and webviews; **CSP is still absent** (open) |
+| R12 | Print window loads the app preload (`PRELOAD_PATH`) into a generated temp HTML file | `electron/ipc/files.ipc.cjs:218-228` | Low | S3 | fixed (Q4, cp4) — the print window has no preload and the temp page contains one `<img>` and no script |
 | R13 | `folders:generatePath` accepts a renderer-supplied `archiveRoot` and `mkdir`s under it (type name is sanitised, only file writes are re-validated) | `electron/ipc/folders.ipc.cjs:11-13`; `electron/services/folderNaming.cjs:35-42,68` | Medium | S2 | open |
 | R14 | Backup restore extracts a ZIP to temp, then trusts the archive path stored inside the backup DB; `isSafeArchiveTarget` is an exact match against a forbidden list, so subfolders of Documents pass | `electron/ipc/backup.ipc.cjs:148,158,161`; `electron/services/backup.cjs:11-23` | Medium | S4 | verify |
 | R15 | Electron 28.3.3 (out of support) and 27 unresolved npm advisories | §7 below; `package.json` (`electron ^28.1.0`) | High | S5 | open |
@@ -157,6 +164,9 @@ unchanged: they still need no login (R3, out of scope for Q1–Q13).
 | R18 | A renderer reload (Ctrl+R, crash recovery) drops `sessionStorage` but not the main-process session | `electron/security/session.cjs`; `auth:logout` and the window `closed` event are the only clears (`electron/ipc/auth.ipc.cjs`, `electron/main.cjs`) | Low | S1 | accepted — the UI shows the login screen while the window stays authorized for the previous user; reaching a guarded channel then needs renderer code execution |
 | R19 | `backup:restore` swaps the users table under a live session | `electron/ipc/backup.ipc.cjs:114`; the session keeps its `userId`, and `isAdmin` re-reads that id's row in the restored DB | Low | S1 | accepted — restore is admin-guarded and the renderer offers no forced re-login (`src/pages/Settings.tsx`); a restored DB that reuses the id decides the session's new authority |
 | R20 | Sender URL check is a second layer behind the main-frame identity check | `electron/security/senderGuard.cjs`; measured packaged URLs `file:///D:/` and `file:///D:/students` differ from `dist/index.html`, so the policy also allows one flat segment under a drive root | Low | S3 | verify — the packaged build must be smoke-tested with this guard (login, navigation, import, print); fallback if a route URL is ever denied is `HashRouter` |
+| R21 | Production mode was `NODE_ENV === 'development' \|\| !app.isPackaged`, so `NODE_ENV=development` pointed an installed copy at `http://localhost:5173` and opened DevTools | `electron/main.cjs` (S0: the `isDev` line and `openDevTools`) | High | S3 | fixed (Q1, cp2) — `electron/security/runtimeMode.cjs` derives dev only from `app.isPackaged === false`; the dev-server URL and DevTools follow it |
+| R22 | No permission handlers: any renderer page could request the microphone, notifications, display capture or other permissions | `electron/main.cjs` (S0: no `setPermissionRequestHandler`) | Medium | S3 | fixed (Q7, cp5/cp5b) — `electron/security/navGuard.cjs`; request handler grants `media` with `video` only, check handler also tolerates the `unknown` label probe, everything else is denied |
+| R23 | Electron fuses left at defaults: `ELECTRON_RUN_AS_NODE=1` turns the installed exe into a Node shell, and `NODE_OPTIONS` / `--inspect` can inject code into the main process | `package.json` (S0: no `afterPack`, no `electronFuses`) | High | S3 | fixed (Q13, cp6) — `scripts/afterPack.cjs` flips `RunAsNode`, `EnableNodeOptionsEnvironmentVariable` and `EnableNodeCliInspectArguments` off in the Windows exe; needs the installer smoke test (run `ELECTRON_RUN_AS_NODE=1` on the built exe) |
 
 R17 is an integrity issue rather than an attacker-controlled one; it is listed
 because a missing setting silently splits reads from backup paths.
@@ -273,6 +283,11 @@ GitHub.
   explicitly; Electron defaults it on), `adm-zip@0.6.1` zip-slip behaviour during
   extraction, junction/UNC behaviour on the archive path, and the installer
   build (`npm run build:win` has not been re-run since the refactor).
+- **CSP** — not added in P1B (later work); R11 stays partly open for it.
+- **P1B manual smoke test** — on the built installer: F12/Ctrl+Shift+I do nothing,
+  there is no menu bar, `NODE_ENV=development` does not load localhost:5173,
+  camera scan and print still work, an outside link/`window.open` does nothing,
+  and `ELECTRON_RUN_AS_NODE=1` does not produce a Node shell (R21–R23).
 
 ## 12. Phase log
 
@@ -286,3 +301,9 @@ GitHub.
 | 2026-10-27 | P1A cp3 | Q5 wired: session set on login, cleared on `auth:logout` and window close; `isAdmin` requires the session and re-reads `role, status`. R1 and R2 fixed; R18 (reload) and R19 (`backup:restore`) recorded as accepted residual risks rather than changed, per instruction. |
 | 2026-10-27 | P1A cp4 | Q6 wired: `electron/security/senderGuard.cjs` plus one guarded `ipcMain.handle` swap in `electron/ipc/index.cjs`. R20 recorded: the packaged route URLs measured in a real window (`file:///D:/`, `file:///D:/students`) do not equal `dist/index.html`, so the URL policy allows one flat segment under a drive root; HashRouter is the fallback if a route URL is ever denied. |
 | 2026-10-27 | P1A cp5 | Added `tests/electron/security/ipcGuardWiring.test.ts` (9 tests) pinning the wrapper: every `*.ipc.cjs` is required exactly once by `ipc/index.cjs`, the guard is installed before the first require and restored after the last, no handler is registered outside `electron/ipc`, channel names are unique (47), and `main.cjs` passes the guard. Proven non-vacuous with a planted rogue module and a planted handler outside `electron/ipc`. This register updated: §4/§5 mitigation text, R1/R2 fixed, R3 narrowed, R18–R20 added. |
+| 2026-10-27 | P1B cp1 | Window, dev-mode and installer analysis (`docs/security/p1b-window-analysis.md`): one dev decision at `main.cjs:17`, no menu ever set, print window takes the app preload, no pop-up/navigation/webview guards, no permission handlers, renderer needs camera video only, `@electron/fuses` not installed, installer script `npm run build:win`. Analysis only. |
+| 2026-10-27 | P1B cp2 | Q1: production means packaged. `electron/security/runtimeMode.cjs` decides dev from `app.isPackaged === false` alone; the dev-server URL and DevTools follow it, so `NODE_ENV=development` can no longer point an installed copy at Vite (R21 fixed). |
+| 2026-10-27 | P1B cp3 | Q2: packaged builds get `devTools: false` on both windows, no application menu, and a `before-input-event` guard over F12/F5/Ctrl+R/Ctrl+Shift+I/J (`electron/security/blockedKeys.cjs`). R11 narrowed to CSP. |
+| 2026-10-27 | P1B cp4 | Q4: the hidden print window no longer gets the app preload (R12 fixed); it keeps sandbox, `nodeIntegration: false` and `contextIsolation: true`, and its temp page has no script and calls no bridge. |
+| 2026-10-27 | P1B cp5 / cp5b | Q7: `electron/security/navGuard.cjs` denies window-open, away-navigation (reusing the Q6 URL policy) and webview attachment, and installs request/check permission handlers that grant camera video only (R22 fixed). cp5b lets the check handler answer Chromium's `mediaType: 'unknown'` label probe; the request handler stays video-only and audio stays denied. |
+| 2026-10-27 | P1B cp6 | Q13: `scripts/afterPack.cjs` flips `RunAsNode`, `EnableNodeOptionsEnvironmentVariable` and `EnableNodeCliInspectArguments` off in the Windows exe and is registered as `afterPack`; `@electron/fuses@1.8.0` added as the only new package (R23 fixed, pending the installer smoke test). No IPC, schema or CSP change in P1B. |

@@ -1422,3 +1422,26 @@ Follow-ups deliberately deferred until the defense pass is finished.
   `navGuardWiring.test.ts` was updated to pin one call site per decision.
   Manual check: camera dropdown shows real device names; microphone-only requests and
   notifications still fail.
+- **P1B cp6 (2026-10-27)** — Q13: the built Windows exe is shipped with three Electron fuses
+  off. New `scripts/afterPack.cjs` (CommonJS because `package.json` is `"type": "module"`) is
+  electron-builder's `afterPack` hook (`"afterPack": "scripts/afterPack.cjs"` in the `build`
+  block). It resolves `appOutDir/<productFilename>.exe` only when
+  `electronPlatformName === 'win32'` (macOS/Linux keep Electron's defaults), throws if the exe
+  is missing rather than reporting success, and calls `flipFuses` with exactly
+  `{ version: FuseV1, RunAsNode: false, EnableNodeOptionsEnvironmentVariable: false,
+  EnableNodeCliInspectArguments: false }`. The first stops `ELECTRON_RUN_AS_NODE=1` from
+  turning the app into a Node shell; the other two stop `NODE_OPTIONS` and `--inspect` from
+  injecting code into the main process. `EnableCookieEncryption`,
+  `EnableEmbeddedAsarIntegrityValidation`, `OnlyLoadAppFromAsar`,
+  `LoadBrowserProcessSpecificV8Snapshot` and `GrantFileProtocolExtraPrivileges` are left alone:
+  each needs companion changes (key handling, asar-only layout, V8 snapshot) we have not made,
+  and a half-enabled fuse breaks the build.
+  Dependency: `npm install -D -E @electron/fuses@1.8.0` (the CommonJS release; 2.x is ESM-only).
+  The lockfile gained only that package and its nested `fs-extra@9.1.0`; no other package
+  changed version, and the existing `better-sqlite3` binding was untouched.
+  9 tests in `tests/scripts/afterPack.test.ts`: the win32 exe path, the non-win32 skip, the exact
+  fuse option set (and that the others are absent), `applyFuses` calling `flip(exePath, options)`
+  with injected `exists`/`flip`, a missing exe rejecting without calling `flip`, and the
+  `package.json` wiring.
+  Manual check: on the installed app, `set ELECTRON_RUN_AS_NODE=1` then run the exe — the app
+  window opens normally (no Node REPL); the app still logs in, scans and prints.
