@@ -63,7 +63,7 @@ graph TD
     end
 
     subgraph Preload["Preload Script  (Node.js — isolated context)"]
-        Bridge["contextBridge.exposeInMainWorld\n→ wraps ipcRenderer.invoke calls\n→ 39 whitelisted methods"]
+        Bridge["contextBridge.exposeInMainWorld\n→ wraps ipcRenderer.invoke calls\n→ 47 whitelisted methods"]
     end
 
     subgraph Main["Main Process  (Node.js — full access)"]
@@ -90,24 +90,24 @@ The Chromium renderer process that runs the React UI is sandboxed. It cannot imp
 
 ## 3. Technology Stack & Rationale
 
-### Verified package versions (from `package.json`)
+### Installed package versions (from `package-lock.json`)
 
 | Package | Version | Role | Architectural rationale |
 |---|---|---|---|
-| **Electron** | 28.1 | Desktop shell | Provides Chromium renderer + Node.js main process in a single distributable; enables file-system access, native dialogs, and offline operation without a web server |
-| **React** | 18.2 | UI library | Component model enables isolated, reusable UI pieces with predictable state management; the unidirectional data-flow pattern maps cleanly onto the IPC request/response cycle |
-| **TypeScript** | 5.3 | Type system | Strict mode (`"strict": true`, `noUnusedLocals`, `noUnusedParameters`) catches interface mismatches between the preload bridge, IPC handlers, and React components at compile time, not at runtime |
-| **Vite** | 5.0 | Build tool | Sub-second hot-module replacement in development; produces a minified single-bundle output in `dist/` for the packaged app |
-| **Tailwind CSS** | 4.0-beta | Styling | Utility classes eliminate a separate stylesheet abstraction layer; co-location of style and structure in `.tsx` files simplifies maintenance |
-| **React Router** | 6.21 | Client-side routing | Hash-free `BrowserRouter` works within Electron's Chromium renderer without a server; routes are protected at the component level and in `App.tsx` |
-| **better-sqlite3** | 9.2 | SQLite driver | Synchronous API eliminates callback/Promise complexity for database operations inside IPC handlers; significantly faster than `node-sqlite3` for the read-heavy query patterns in this application |
-| **bcryptjs** | 2.4 | Password hashing | Pure-JavaScript implementation; no native compilation needed, which avoids the `NODE_MODULE_VERSION` mismatch that plagues native modules when Electron's Node.js version differs from the system Node.js |
-| **archiver** | 7.0 | Backup creation | Streaming ZIP creation with configurable compression; used to bundle database + archive folder |
-| **adm-zip** | 0.6 | Backup extraction | Synchronous ZIP extraction used during the restore flow |
-| **lucide-react** | 1.44 | Icons | Tree-shakeable SVG icon set; unused icons are excluded from the production bundle |
+| **Electron** | 28.3.3 | Desktop shell | Provides Chromium renderer + Node.js main process in a single distributable; enables file-system access, native dialogs, and offline operation without a web server |
+| **React** | 18.3.1 | UI library | Component model enables isolated, reusable UI pieces with predictable state management; the unidirectional data-flow pattern maps cleanly onto the IPC request/response cycle |
+| **TypeScript** | 5.9.3 | Type system | Strict mode (`"strict": true`, `noUnusedLocals`, `noUnusedParameters`) catches interface mismatches between the preload bridge, IPC handlers, and React components at compile time, not at runtime |
+| **Vite** | 5.4.21 | Build tool | Sub-second hot-module replacement in development; produces a minified single-bundle output in `dist/` for the packaged app |
+| **Tailwind CSS** | 4.3.3 | Styling | Utility classes eliminate a separate stylesheet abstraction layer; co-location of style and structure in `.tsx` files simplifies maintenance |
+| **React Router** | 6.30.6 | Client-side routing | `HashRouter`: the packaged app runs from a `file://` document, so routes live in the URL hash and the document URL stays `dist/index.html`; routes are protected at the component level and in `App.tsx` |
+| **better-sqlite3** | 9.6.0 | SQLite driver | Synchronous API eliminates callback/Promise complexity for database operations inside IPC handlers; significantly faster than `node-sqlite3` for the read-heavy query patterns in this application |
+| **bcryptjs** | 2.4.3 | Password hashing | Pure-JavaScript implementation; no native compilation needed, which avoids the `NODE_MODULE_VERSION` mismatch that plagues native modules when Electron's Node.js version differs from the system Node.js |
+| **archiver** | 7.0.1 | Backup creation | Streaming ZIP creation with configurable compression; used to bundle database + archive folder |
+| **adm-zip** | 0.6.1 | Backup extraction | Synchronous ZIP extraction used during the restore flow |
+| **lucide-react** | 1.46.0 | Icons | Tree-shakeable SVG icon set; unused icons are excluded from the production bundle |
 | **jscanify** | 1.4.3 (dev) | Document scanning | OpenCV-based paper-contour detection; copied as a local static asset at build time so no network fetch occurs at runtime |
-| **@fontsource/dm-sans** | 5.3 | Body typography | Self-hosted font; no Google Fonts CDN call |
-| **@fontsource/space-mono** | 5.3 | Monospace typography | Self-hosted font; used for file names and code-like data |
+| **@fontsource/dm-sans** | 5.3.0 | Body typography | Self-hosted font; no Google Fonts CDN call |
+| **@fontsource/space-mono** | 5.3.0 | Monospace typography | Self-hosted font; used for file names and code-like data |
 
 ### Key trade-offs
 
@@ -129,7 +129,16 @@ registrar-archiving-system/
 │   │                     # migrations, shutdown hooks, registerAllIpc()
 │   ├── paths.cjs         # userData / database path anchors (require-time side effects)
 │   ├── window.cjs        # getMainWindow / setMainWindow — the single window reference
-│   ├── preload.js        # Preload bridge: 39 contextBridge-exposed methods
+│   ├── security/         # Pure decision modules (no electron import; unit-tested)
+│   │   ├── adminDecision.cjs  # decideAdmin — session + role + active status
+│   │   ├── archiveRoot.cjs    # resolveArchiveRoot — the one archive-root rule
+│   │   ├── blockedKeys.cjs    # isBlockedShortcut — DevTools/reload keys when packaged
+│   │   ├── navGuard.cjs       # window-open, away-navigation, webview, permissions
+│   │   ├── pickedFiles.cjs    # normalizePickedPath / isPickedPath (dialog-picked sources)
+│   │   ├── runtimeMode.cjs    # dev only when app.isPackaged === false
+│   │   ├── senderGuard.cjs    # IPC sender identity + allowed page URL
+│   │   └── session.cjs        # the main-process session set at login
+│   ├── preload.js        # Preload bridge: 47 contextBridge-exposed methods
 │   ├── db/
 │   │   ├── connection.cjs   # The one better-sqlite3 handle, initializeDatabase(),
 │   │   │                    # closeDatabase(), the doc_academic_year() SQL function
@@ -167,7 +176,9 @@ registrar-archiving-system/
 │   ├── vite-env.d.ts     # Vite client type declarations
 │   │
 │   ├── assets/
-│   │   └── adzu-seal.png # University seal (window icon + branding)
+│   │   ├── logo-256.png  # In-app logo (sidebar + login screen)
+│   │   ├── logo-1024.png
+│   │   └── adzu-seal.png # Former seal, kept in the tree but no longer referenced
 │   │
 │   ├── components/
 │   │   ├── Layout.tsx             # Sidebar navigation, logout button
@@ -252,7 +263,11 @@ registrar-archiving-system/
 │   ├── features/import-scanner/lib/  # cameraErrors, documentValidation,
 │   │                                 # editableImages, queueHelpers,
 │   │                                 # studentSearch, workflowLabels
+│   ├── electron/security/            # 18 suites for the pure security modules
+│   │                                 # and their wiring (session, senderGuard,
+│   │                                 # navGuard, archiveRoot, pickedFiles, …)
 │   ├── electron/services/studentQueries.test.ts  # the .cjs SQL builders
+│   ├── scripts/afterPack.test.ts     # fuse flipping in the packaged exe
 │   ├── utils/            # format.test.ts, debounce.test.ts
 │   └── helpers/fixtures.ts  # Shared Student / DocumentType / file fixtures
 │
@@ -262,11 +277,17 @@ registrar-archiving-system/
 │       └── jscanify.js     # jscanify browser build
 │
 ├── scripts/
-│   └── prepare-scanner-assets.mjs  # Copies jscanify assets from node_modules
-│                                    # to public/scanner/ (run by postinstall)
+│   ├── prepare-scanner-assets.mjs  # Copies jscanify assets from node_modules
+│   │                                # to public/scanner/ (run by postinstall)
+│   └── afterPack.cjs               # electron-builder hook: flips the Electron
+│                                    # fuses off in the packaged Windows exe
 │
-├── database/               # Legacy path — app migrates DB to userData on first run
-│   └── registrar_archive.db
+├── build/                  # electron-builder resources (not packed into the asar)
+│   ├── icon.ico            # exe icon (16–256 px)
+│   └── icon.png            # copied to resources/icon.png for the window icon
+│
+├── database/               # Legacy path — read only when upgrading from the
+│   └── registrar_archive.db # pre-refactor build; copied to userData on first run
 │
 ├── dist/                   # Vite production build output (gitignored)
 ├── release/                # electron-builder packaged installers (gitignored)
@@ -463,11 +484,11 @@ All renderer→main communication uses `ipcRenderer.invoke` (request-response). 
 { success: false, error: string }
 ```
 
-The preload bridge exposes **39 methods** across these namespaces:
+The preload bridge exposes **47 methods** across these namespaces — one per IPC channel:
 
 | Namespace | Methods | Admin-only |
 |---|---|---|
-| `auth` | `login` | — |
+| `auth` | `login`, `logout` | — |
 | `students` | `getAll`, `search`, `getById`, `create`, `update`, `delete`, `getFilterOptions`, `getDeleted`, `restore`, `purge` | create, update, delete, getDeleted, restore, purge |
 | `documents` | `search`, `delete`, `update`, `getDeleted`, `restore`, `purge` | delete, update, getDeleted, restore, purge |
 | `documentTypes` | `getAll`, `create`, `delete` | create, delete |
@@ -480,8 +501,15 @@ The preload bridge exposes **39 methods** across these namespaces:
 | `image` | `saveBase64` | — |
 | `documents` (batch) | `createBatch` | yes |
 | `folders` | `generatePath` | — |
-| `archive` | `changeDirectory`, `checkIntegrity` | both |
+| `archive` | `changeDirectory`, `checkIntegrity`, `purgeAll` | all |
 | `backup` | `create`, `restore` | both |
+
+Two rules apply to every channel in the table. First, the call must come from the main window's
+main frame on the app's own page; anything else returns
+`{ success: false, error: 'Permission denied' }` before the handler body runs
+(`electron/ipc/index.cjs` + `electron/security/senderGuard.cjs`). Second, an admin check passes
+only when the `userId` argument is the account that logged in **and** that account is still an
+active administrator (`electron/services/authz.cjs`).
 
 ```mermaid
 sequenceDiagram
@@ -514,13 +542,18 @@ Two roles are defined in the database `CHECK` constraint and enforced by every p
 
 ```javascript
 async function isAdmin(userId) {
-  if (!userId) return false;
-  const user = getDb().prepare('SELECT role FROM users WHERE id = ?').get(userId);
-  return user && user.role === 'admin';
+  if (!session.isCurrentUser(userId)) return false;
+  const row = getDb().prepare('SELECT role, status FROM users WHERE id = ?').get(userId);
+  return decideAdmin({ session: session.get(), userId, row });
 }
 ```
 
-The `userId` passed through every IPC call is cross-referenced against the database on every request. A renderer-supplied claim of `role: 'admin'` is never trusted — the role is always re-read from the database in the main process.
+`isAdmin` returns true only when the argument is the account that logged in (the main process
+remembers it at `auth:login`), the row still exists, its `role` is `admin` **and** its `status` is
+`active`. Deactivating an admin therefore removes their authority on the next call, and
+`auth:logout` or closing the window clears the session.
+
+The `userId` passed through every IPC call is cross-referenced against the database on every request. A renderer-supplied claim of `role: 'admin'` is never trusted — the role is always re-read from the database in the main process. An id that belongs to a different account than the logged-in session is rejected before that read.
 
 ### Permission matrix
 
@@ -774,7 +807,7 @@ Dev-only — none of these run during `npm run build`, and no lint or test outpu
 
 | Command | What it does |
 |---|---|
-| `npm test` | `vitest run --passWithNoTests` — the suites under `tests/` (currently 9 files / 109 tests: the pure `src/features/import-scanner/lib/*` helpers, `src/utils/format.ts`, `src/utils/debounce.ts`, and the pure SQL builders in `electron/services/studentQueries.cjs`). Renderer code is imported through the same `@` alias Vite uses; the `.cjs` service is `require`d directly. |
+| `npm test` | `vitest run --passWithNoTests` — the suites under `tests/` (currently **28 files / 304 tests**): the pure `src/features/import-scanner/lib/*` helpers, `src/utils/format.ts`, `src/utils/debounce.ts`, the pure SQL builders in `electron/services/studentQueries.cjs`, the 18 security suites in `tests/electron/security/`, and `tests/scripts/afterPack.test.ts`. Renderer code is imported through the same `@` alias Vite uses; the `.cjs` services are `require`d directly. |
 | `npm run lint` | Flat ESLint config (`eslint.config.mjs`). **Every rule is set to `warn`**, so it reports problems and still exits 0 — it cannot fail a build. The current warnings are dominated by `react-hooks/rules-of-hooks` on the three admin-gated pages. |
 | `npm run typecheck` | `tsc --noEmit` over `src/` (see above). |
 | `npm run format` | `prettier --write` **with no default path** — it deliberately does nothing (and writes nothing) unless you pass explicit file arguments, e.g. `npm run format -- src/utils/debounce.ts`. `*.md` is ignored via `.prettierignore`. |
@@ -807,13 +840,28 @@ The installer is configured in `package.json` under the `build` key:
 {
   "appId": "com.adzu.registrar.archive",
   "productName": "AdZU Registrar Archive",
-  "win": { "target": ["nsis"], "icon": "src/assets/adzu-seal.png" },
-  "files": ["dist/**/*", "electron/**/*", "node_modules/**/*", "package.json"],
+  "afterPack": "scripts/afterPack.cjs",
+  "win": { "target": ["nsis"], "icon": "build/icon.ico" },
+  "extraResources": [{ "from": "build/icon.png", "to": "icon.png" }],
+  "files": [
+    "dist/**/*", "electron/**/*", "node_modules/**/*",
+    "!node_modules/jscanify/**", "!node_modules/canvas/**", "!node_modules/jsdom/**",
+    "package.json"
+  ],
   "directories": { "output": "release" }
 }
 ```
 
-Note: `node_modules/jscanify` and `node_modules/canvas` are excluded from the packaged build because their source files are already copied to `public/scanner/` at build time.
+`afterPack` runs after the app is packed and flips three Electron fuses off in the Windows exe
+(`RunAsNode`, `EnableNodeOptionsEnvironmentVariable`, `EnableNodeCliInspectArguments`), so
+`ELECTRON_RUN_AS_NODE=1`, `NODE_OPTIONS` and `--inspect` cannot turn the shipped exe into a Node
+shell or inject code into the main process. `build/` is electron-builder's resources folder, not
+part of the asar, which is why the window icon reaches the installed app through
+`extraResources`.
+
+Note: `node_modules/jscanify`, `node_modules/canvas` and `node_modules/jsdom` are excluded from
+the packaged build because their source files are already copied to `public/scanner/` at build
+time.
 
 ### macOS / Linux
 
@@ -832,13 +880,14 @@ These are included in `package.json` scripts but have not been tested on the tar
 |---|---|---|
 | **Database encryption** | ❌ Not implemented | The SQLite file is unencrypted. It is protected only by OS user-level file permissions (`AppData\Roaming`). SQLite encryption (e.g., SQLCipher) was not implemented. |
 | **Archive file encryption** | ❌ Not implemented | Archived images and documents are plain files on the file system. |
-| **Session expiry** | ❌ Not implemented | The session (stored in `sessionStorage`) persists until the window is closed or the user manually logs out. There is no idle timeout. |
+| **Session expiry** | ❌ Not implemented | The login is remembered in two places: `sessionStorage` in the renderer, and the main-process session set at `auth:login`. Both last until the window is closed or the user logs out; there is no idle timeout. A renderer reload clears only `sessionStorage`, so the UI returns to the login screen while the main process still holds the previous session (recorded as an accepted residual risk, register R18). |
 | **Concurrent users** | ❌ Not supported | `better-sqlite3` holds a single connection. Multiple Electron windows or instances would contend for the same database file. The application is designed for single-user desktop operation. |
-| **Password change** | ✅ Implemented | Admins can set user passwords via `users:create` and `users:updateStatus`; there is no self-service password-change UI for the current user. |
+| **Password change** | ❌ Not implemented | There is no password-change channel and no UI. `users:create` sets the password of a **new** account and `users:updateStatus` only changes `status`; an administrator cannot reset an existing account's password from inside the app, and a user cannot change their own. |
 | **Student ID uniqueness** | ✅ Enforced | `student_id TEXT UNIQUE` in the schema; the application returns a friendly duplicate error before hitting the constraint. |
 | **program_level values** | ⚠️ Hardcoded | Only `College`, `Graduate School`, `Medicine`, and `Law` map to archive folders. A student with a different `program_level` cannot have documents filed under them. |
 | **PDF/Office editing** | ❌ Not supported | Only image files (JPG, PNG, GIF) pass through the crop/rotate editor. PDFs and Office files are archived and opened with the OS default viewer. |
-| **Audit log write access** | ⚠️ Admin-only write | `logs:add` requires admin. Frontend activity logging from non-admin users (e.g., login events) is done through internal main-process writes, not through `logs:add`. |
+| **Audit log write access** | ⚠️ Admin-only, renderer-supplied | `logs:add` requires an active admin session, but the action text and target come from the renderer, and the UI calls it from five sites (`Students.tsx`, `ImportScannerPage.tsx`). Login is logged by the main process itself (`auth:login`), and every mutating handler writes its own entry. A renderer that executes code could still forge an entry (register R10, open). |
+| **Electron version** | ⚠️ Out of support | `electron@28.3.3` is installed (declared `^28.1.0`). The advisory database lists advisories against it, and the upgrade is deliberately a separate, risky phase because it needs `npm run rebuild` for `better-sqlite3` plus a full installer check (register R15, open). |
 | **Metadata fields** | ⚠️ Partially removed | The schema previously included `metadata_fields` and `document_type_fields` tables for per-type custom fields. These tables were dropped by migration. `metadata_json` in documents still stores `academic_year` and `remarks`; the dynamic-field UI code in `ImportScanner.tsx` references `dynamicFieldConfigs` but with no table backing it. |
 
 ---
@@ -852,13 +901,13 @@ A: The primary requirement was fully offline operation with no server infrastruc
 A: SQLite stores its entire database in a single file, making it ideal for a single-user desktop application. There is no server process to install or configure, no connection pooling, and backups are simply file copies. The entire database travels inside the backup ZIP. The limitations — no concurrent write access from multiple processes, limited column-type enforcement — are irrelevant for this use case.
 
 **Q: How does the application prevent the renderer from accessing arbitrary files or executing arbitrary SQL?**
-A: `contextIsolation: true` and `nodeIntegration: false` in `BrowserWindow.webPreferences` mean the Chromium renderer has no access to Node.js APIs. The `preload.js` bridge uses `contextBridge.exposeInMainWorld` to inject only 39 specific named methods into `window.electronAPI`. The renderer cannot call `ipcRenderer` directly, cannot import `fs` or `better-sqlite3`, and cannot invoke any IPC channel not listed in the preload bridge. All SQL queries in the main process use parameterised `db.prepare(...).run(...)` statements, preventing SQL injection.
+A: `contextIsolation: true` and `nodeIntegration: false` in `BrowserWindow.webPreferences` mean the Chromium renderer has no access to Node.js APIs. The `preload.js` bridge uses `contextBridge.exposeInMainWorld` to inject only 47 specific named methods into `window.electronAPI`. The renderer cannot call `ipcRenderer` directly, cannot import `fs` or `better-sqlite3`, and cannot invoke any IPC channel not listed in the preload bridge. All SQL queries in the main process use parameterised `db.prepare(...).run(...)` statements, preventing SQL injection.
 
 **Q: How does the system prevent a regular-staff user from performing admin actions by sending a forged IPC message?**
-A: Every privileged IPC handler calls `isAdmin(userId)`, which performs a fresh database read: `SELECT role FROM users WHERE id = ?`. The renderer sends the `userId` from `sessionStorage`, but the role is never read from the renderer — it is always re-fetched from the database in the main process. A forged role claim in the IPC argument has no effect.
+A: Every privileged IPC handler calls `isAdmin(userId)`, which first requires the id to be the account that logged in, then performs a fresh database read: `SELECT role, status FROM users WHERE id = ?`, and accepts only an `admin` row whose `status` is `active`. The renderer sends the `userId` from `sessionStorage`, but neither the role nor the status is ever read from the renderer. A forged role claim in the IPC argument has no effect, and an id belonging to another account is rejected before the row is read.
 
 **Q: What happens to the database if the application crashes mid-write?**
-A: `better-sqlite3` uses WAL (Write-Ahead Logging) mode implicitly for concurrent-safe snapshots (used in `db.backup()`). SQLite itself is ACID-compliant: an interrupted write either completes or rolls back on the next connection open. The migration sidecar files (`-wal`, `-shm`, `-journal`) are cleaned up explicitly during the backup restore flow.
+A: `better-sqlite3` opens the database in SQLite's **default rollback-journal (`delete`) mode**: the application never executes a `journal_mode` pragma, so WAL is not used. `db.backup()` is SQLite's online backup API and produces a consistent snapshot of that database without requiring WAL. SQLite itself is ACID-compliant: an interrupted write either completes or rolls back on the next connection open. Any sidecar files a previous run or a restored database left behind (`-wal`, `-shm`, `-journal`) are removed explicitly during the backup restore flow.
 
 **Q: How is the archive folder structure kept consistent with the database?**
 A: Document paths are stored relative to the `archive_directory` setting. On startup, `migrateToRelativePaths()` rewrites any legacy absolute paths. `migrateDocumentTypeFolders()` moves files that were stored flat in the student folder into their document-type subfolder. `resolveArchivePath()` is used for every file operation: it validates the path is within the archive root and handles both absolute legacy paths and relative current paths transparently.
@@ -888,7 +937,7 @@ The following files were read directly to verify every claim in this README:
 | `electron/services/authz.cjs` | `isAdmin(userId)` |
 | `electron/services/studentQueries.cjs` | Pure SQL builders behind student search / listing |
 | `electron/ipc/*.ipc.cjs` | One domain per file; the `ipcMain.handle` bodies |
-| `electron/preload.js` | Exact list of 39 exposed bridge methods |
+| `electron/preload.js` | Exact list of 47 exposed bridge methods |
 | `src/App.tsx` | Auth state, session storage, route guards |
 | `src/features/import-scanner/components/ImportScannerPage.tsx` | Scanner orchestration, `runLiveDetection`, `handleCapturePhoto` |
 | `src/components/ImageEditor.tsx` | `findQuad` / `runDetection` — editor-side detection and corner handling |

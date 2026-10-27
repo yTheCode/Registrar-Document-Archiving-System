@@ -1,5 +1,14 @@
-export function formatDate(dateString: string) {
+const UNKNOWN_DATE = 'Unknown date'
+
+/** Placeholder instead of a throw: one bad created_at must not blank a whole list. */
+export function formatDate(dateString: string | null | undefined) {
+  if (typeof dateString !== 'string' || dateString.trim() === '') {
+    return UNKNOWN_DATE
+  }
   const date = new Date(dateString)
+  if (Number.isNaN(date.getTime())) {
+    return UNKNOWN_DATE
+  }
   return new Intl.DateTimeFormat('en-US', {
     month: 'short',
     day: 'numeric',
@@ -13,9 +22,17 @@ export function formatStudentYear(student: { school_year: string | null; program
 }
 
 const MANILA_TZ = 'Asia/Manila'
+const UNKNOWN_TIME = 'Unknown time'
 
-export function formatTimestamp(timestamp: string) {
+/** Placeholder instead of a throw: one bad timestamp must not blank a whole list. */
+export function formatTimestamp(timestamp: string | null | undefined) {
+  if (typeof timestamp !== 'string' || timestamp.trim() === '') {
+    return UNKNOWN_TIME
+  }
   const date = new Date(timestamp)
+  if (Number.isNaN(date.getTime())) {
+    return UNKNOWN_TIME
+  }
   const dayFmt = new Intl.DateTimeFormat('en-CA', {
     timeZone: MANILA_TZ,
     year: 'numeric',

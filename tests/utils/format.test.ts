@@ -17,9 +17,23 @@ describe('formatDate', () => {
     expect(formatDate('2026-09-09T12:00:00Z')).toBe('Sep 9, 2026')
   })
 
-  it('throws on an unparseable value (Intl rejects an Invalid Date)', () => {
-    expect(() => formatDate('')).toThrow(RangeError)
-    expect(() => formatDate('not-a-date')).toThrow(RangeError)
+  it('renders a date-only string', () => {
+    // '2026-06-15' is UTC midnight, so the local calendar day is Jun 14 or Jun 15
+    // depending on the machine's zone; both are a real date, never the placeholder.
+    expect(formatDate('2026-06-15')).toMatch(/^Jun 1[45], 2026$/)
+  })
+
+  it('returns the placeholder instead of throwing on an unparseable value', () => {
+    // Updated in p1d cp1: this test used to pin the throwing behaviour (Q12).
+    expect(formatDate('not-a-date')).toBe('Unknown date')
+    expect(formatDate('2026-13-45')).toBe('Unknown date')
+  })
+
+  it('returns the placeholder for null, undefined, empty and blank input', () => {
+    expect(formatDate(null)).toBe('Unknown date')
+    expect(formatDate(undefined)).toBe('Unknown date')
+    expect(formatDate('')).toBe('Unknown date')
+    expect(formatDate('   ')).toBe('Unknown date')
   })
 })
 
@@ -85,9 +99,25 @@ describe('formatTimestamp', () => {
     expect(formatTimestamp('2026-03-05T16:30:00Z')).toBe('Mar 6, 12:30 AM')
   })
 
-  it('throws on an unparseable timestamp (Intl rejects an Invalid Date)', () => {
+  it('returns the placeholder instead of throwing on an unparseable timestamp', () => {
+    // Updated in p1d cp1b: this test used to pin the throwing behaviour (Q12).
     freezeNow()
-    expect(() => formatTimestamp('')).toThrow(RangeError)
-    expect(() => formatTimestamp('garbage')).toThrow(RangeError)
+    expect(formatTimestamp('garbage')).toBe('Unknown time')
+    expect(formatTimestamp('2026-13-45T10:00:00Z')).toBe('Unknown time')
+  })
+
+  it('returns the placeholder for null, undefined, empty and blank input', () => {
+    freezeNow()
+    expect(formatTimestamp(null)).toBe('Unknown time')
+    expect(formatTimestamp(undefined)).toBe('Unknown time')
+    expect(formatTimestamp('')).toBe('Unknown time')
+    expect(formatTimestamp('   ')).toBe('Unknown time')
+  })
+
+  it('accepts a timestamp that carries a time part', () => {
+    freezeNow()
+    expect(formatTimestamp('2026-03-05T02:30:00Z')).toBe('Today at 10:30 AM')
+    expect(formatTimestamp('2026-03-05T02:30:00.250Z')).toBe('Today at 10:30 AM')
+    expect(formatTimestamp('2026-03-04T21:45:00+08:00')).toBe('Yesterday at 09:45 PM')
   })
 })

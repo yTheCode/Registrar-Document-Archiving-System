@@ -53,10 +53,10 @@ Go back to a known-good state with `git checkout main` then `git reset --hard <t
 | Phase | Result |
 |---|---|
 | 0 | Baseline recorded, `REFACTOR_NOTES.md`, `REFACTOR_SMOKE_TEST.md` (13-section manual checklist) |
-| 1 | `electron/main.cjs` 2,838 lines → about 80 lines (startup + `createWindow`). 46 IPC handlers moved verbatim into 14 `ipc/*.ipc.cjs` files; shared logic into `db/`, `services/`, `paths.cjs`, `window.cjs`. Channel names, DB schema and `preload.js` unchanged |
+| 1 | `electron/main.cjs` 2,838 lines → about 80 lines (startup + `createWindow`). 46 IPC handlers moved verbatim into 14 `ipc/*.ipc.cjs` files at the time (47 today — `auth:logout` arrived with the session work); shared logic into `db/`, `services/`, `paths.cjs`, `window.cjs`. Channel names, DB schema and `preload.js` unchanged |
 | Feature | Capture saves the cropped page when auto-crop is on (see section 5) |
 | 3 | `ImportScanner.tsx` 2,309 → 1,446 lines: 19 components and 7 `lib/` files split out. State, effects and handlers **stay in the page** (no hooks extracted yet) |
-| 6-lite | ESLint (warnings only), Prettier, Vitest: 9 test files, 109 tests. README updated to the new layout |
+| 6-lite | ESLint (warnings only), Prettier, Vitest: 9 test files, 109 tests at the end of the refactor (28 files, 304 tests after Phase 1). README updated to the new layout |
 
 **Not done** (see section 9): typed `api.ts` wrapper (Phase 2), Students/Settings/Search splits
 (Phase 4), `ImageEditor`/`DocumentViewerModal`/`jscanifyScanner` splits (Phase 5), hook
@@ -147,10 +147,11 @@ package installs and edits outside the agreed scope.
 
 ## 7. Testing and tooling
 
-- `npm test`: 9 files, 109 tests, in `tests/` (kept out of `electron/` and `src/` because
-  those folders are packaged). Covers pure renderer logic and the student SQL builders
-  (loaded with `createRequire`, no mocks). The tests pin current behavior, including known flaws.
-  When you fix a flaw, update its test in the same commit.
+- `npm test`: 28 files, 304 tests, in `tests/` (kept out of `electron/` and `src/` because
+  those folders are packaged). Covers pure renderer logic, the student SQL builders
+  (loaded with `createRequire`, no mocks) and, since Phase 1, the 18 suites in
+  `tests/electron/security/` plus `tests/scripts/afterPack.test.ts`. Those pin behaviour,
+  including known flaws. When you fix a flaw, update its test in the same commit.
 - **Not covered:** `folderNaming.cjs`, `archivePaths.cjs` (blocked by `paths.cjs`), anything using
   the DB (the better-sqlite3 binary is built for Electron's ABI, so Node cannot open it),
   `liveOutline.ts`, components.
@@ -185,7 +186,8 @@ Full list with line numbers: `REFACTOR_NOTES.md` ("Suspected bugs", "After the d
   sections on the final `main` before relying on it.
 - **Installer:** `npm run build:win` has not been run since the refactor. Install the result and
   check login, one import, **printing** (uses the moved preload path) and the unsafe-directory refusal.
-- **README leftovers:** "39 methods" in `preload.js` (it has 46 `invoke` calls; VERIFY), a stale
+- **README leftovers:** the "39 methods" figure was corrected to 47 in Phase 1D (the preload has
+  47 `invoke` calls); a stale
   folder name in section 13, section 2 omits `src/features`, section 3 omits the new devDependencies.
 - **Old GitHub repo** from before the restart: confirm it is private or deleted and that no real
   student data or database file is in its history.
@@ -197,12 +199,17 @@ Full list with line numbers: `REFACTOR_NOTES.md` ("Suspected bugs", "After the d
 
 ## 10. Security: what is known and what to check
 
-The refactor kept behavior identical on purpose, so **no security fix has been made**.
+The refactor kept behavior identical on purpose, so **no security fix was made during it**.
+Phase 1 (branches `security/p1a-identity`, `security/p1b-electron-hardening`,
+`security/p1c-files-and-paths`, `security/p1d-docs-and-verify`) has since changed the code for
+Q1–Q7, Q11 and Q13. The authoritative, row-by-row record is `docs/SECURITY_REGISTER.md`; the
+table below is the original analysis and its "check or do" column is only current where the
+register still says `open`.
 Items below mix findings from Qoder's analysis with checks nobody has done yet.
 
 | # | Area | Known | Check or do |
 |---|---|---|---|
-| 1 | **Authorization** | Admin-only handlers call `isAdmin(userId)` (about 27 of them), but the `userId` comes from the renderer. Qoder found no session check at all in the main process. These handlers have no check: `auth:login`, `students:getAll/search/getById/getFilterOptions`, `documents:search`, `documentTypes:getAll`, `settings:get`, `dashboard:getStats`, `folders:generatePath`, `image:saveBase64`, `file:copy`, the `file:open*/read*/show*` family | Decide which of these must require a login. Main process should know who is logged in (see roadmap S1) |
+| 1 | **Authorization** | Admin-only handlers call `isAdmin(userId)` (27 of them), and the `userId` still comes from the renderer — but since Q5 the main process also keeps the logged-in session and `isAdmin` accepts only that account's id, re-reading `role, status`. Since Q6 every channel also passes a sender guard. The 18 channels still needing **no login** are listed in the register (§5, R3): `students:getAll/search/getById/getFilterOptions`, `documents:search`, `documentTypes:getAll`, `settings:get`, `dashboard:getStats`, `folders:generatePath`, `image:saveBase64`, `file:copy`, the `file:open*/read*/show*` family, and the two dialogs | Decide whether those 18 must require a login (R3 is still open); Q5/Q6 are done |
 | 2 | Session | Renderer keeps the user in `sessionStorage` key `user`; role-based routes are enforced in React only | Treat the renderer as untrusted; the real check belongs in main |
 | 3 | Login | bcryptjs, cost 10 (per README) | VERIFY: lockout or rate limiting, default admin account and password seeded at first run, password rules |
 | 4 | **File paths** | `file:copy` and `image:saveBase64` use `validateAndResolvePath`; `file:readPickedAsBase64` is limited to files picked in a dialog and blocks forbidden folders | VERIFY that every other file handler (`readAsBase64`, `openExternal`, `showInFolder`, `print`, `exportCopy`) confines paths to the archive root, including `..`, absolute paths and UNC paths |
@@ -212,7 +219,7 @@ Items below mix findings from Qoder's analysis with checks nobody has done yet.
 | 8 | **Backup/restore** | `adm-zip` extraction; `isSafeArchiveTarget` guards targets; backup contains the DB with password hashes | VERIFY zip-slip protection (entry names with `..`), validate the zip before replacing the live DB, consider protecting backups |
 | 9 | Purge all | Needs password confirmation (per checklist) | VERIFY the password is checked in the **main** process, not only in the UI |
 | 10 | Audit log | `logs:add` is callable from the renderer | Renderer-written entries can be forged; log security-relevant events from main |
-| 11 | **Electron hardening** | README says `contextIsolation: true`, `nodeIntegration: false` | VERIFY `sandbox`, `webSecurity`, a CSP, `will-navigate` and `setWindowOpenHandler`, IPC sender checks, and the hardening of the hidden print window |
+| 11 | **Electron hardening** | `contextIsolation: true` and `nodeIntegration: false` are set; `sandbox` is not set explicitly and stays on by Electron 28's default | Done in Phase 1: production means packaged (Q1), no DevTools/menu/reload keys when packaged (Q2), print window without a preload (Q4), pop-ups/navigation/webviews/permissions denied except camera video (Q7), three Electron fuses off (Q13). Still open: **no CSP**, and `sandbox` is implicit rather than stated |
 | 12 | **Dependencies** | `npm install` reported 23 vulnerabilities (4 moderate, 17 high, 2 critical). Electron 28 is far behind supported releases | Run `npm audit`, separate dev-only from runtime issues, **do not** run `npm audit fix --force`. Plan an Electron upgrade as its own risky phase (native module rebuild) |
 | 13 | Data at rest | SQLite DB and archived files are plain on disk | Document the expectation (BitLocker/OS permissions) or evaluate encryption |
 

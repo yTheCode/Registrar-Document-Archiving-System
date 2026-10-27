@@ -1640,3 +1640,105 @@ Follow-ups deliberately deferred until the defense pass is finished.
   in `Settings.tsx`. `docs/SECURITY_REGISTER.md` updated: R6 fixed (Q3), R17 fixed (Q11) with the
   affected-install group and the Settings → Point recovery, §4 mitigation summary, §11 P1C
   smoke test, §12 phase log for cp1–cp4.
+- **P1D cp1 (2026-10-27)** — P1 Q12: `formatDate` in `src/utils/format.ts` now returns the
+  placeholder `Unknown date` for `null`, `undefined`, empty, whitespace-only and unparseable
+  input instead of letting `Intl.DateTimeFormat` throw a `RangeError` on an Invalid Date, and its
+  parameter widened to `string | null | undefined` (widening only, so no caller changed). Why:
+  `Dashboard`, `Search` and `Students` render `doc.created_at`/`student.created_at` per row, so
+  one bad stored value used to blank the whole list. No near copies exist in `src/` (this file is
+  the only date formatting in the renderer). `tests/utils/format.test.ts`: **the existing "throws
+  on an unparseable value" test pinned the old behaviour and was replaced in this commit** by a
+  placeholder assertion, plus new cases for `null`, `undefined`, `''`, `'   '`, `'2026-13-45'`
+  and a date-only string. `formatTimestamp` (same file) was left alone in cp1 as outside Q12;
+  cp1b (below) adds it at the owner's request.
+  Manual check: in a test database set one document's `created_at` to `garbage`
+  (`UPDATE documents SET created_at='garbage' WHERE id=…`), then open Students, Search and
+  Dashboard — the row shows `Unknown date` and the list still renders.
+- **P1D cp1b (2026-10-27)** — P1 Q12, extended by the owner: `formatTimestamp` in
+  `src/utils/format.ts` now returns the placeholder **`Unknown time`** (chosen over
+  `Unknown date` because every other branch of this helper is a clock reading — `Today at …`,
+  `Yesterday at …`) for `null`, `undefined`, empty, whitespace-only and unparseable input, and its
+  parameter widened to `string | null | undefined` (no caller changed). Why: `ActivityLog.tsx`
+  renders one `formatTimestamp(log.created_at)` per row, so a single bad value blanked the Logs
+  page the same way. **The existing "throws on an unparseable timestamp" test pinned the old
+  behaviour and was replaced in this commit**, plus new cases for `null`, `undefined`, `''`,
+  `'   '`, an out-of-range date and timestamps carrying a time part (seconds, milliseconds and a
+  `+08:00` offset). Audit of the renderer for the same pattern: only `src/utils/format.ts` formats
+  dates; `src/components/ui/Pagination.tsx` calls `toLocaleString()` on a number, which cannot
+  throw. No other helper needed changing.
+  Manual check: in a test DB set one `activity_logs` row's `created_at` to `garbage`
+  (`UPDATE activity_logs SET created_at='garbage' WHERE id=…`), open Logs — the row shows
+  `Unknown time` and the table still renders.
+- **P1D cp2 (2026-10-27)** — P1 Q10, analysis only: added `docs/security/p1d-doc-corrections.md`,
+  which checks README, HANDOFF, the smoke checklist and the register against the current code and
+  lists every mismatch with `file:line`, the code evidence and a proposed replacement. Re-counted
+  from the tree: **47 IPC channels = 47 preload methods = 47 handlers** (S0's 46 + `auth:logout`
+  from Q5), 28 test files / 304 tests, 0 lint errors / 112 warnings. Confirmed by reading the code:
+  no `journal_mode` pragma is ever executed (so the README's WAL claim is false — SQLite's default
+  `delete` journal is in use), there is no password-change channel or UI (so "Password change:
+  implemented" is false), no Repository-pattern class exists anywhere, and the renderer does call
+  `logs:add` from five sites (contradicting the README's audit-log note). Phase A–C leftover
+  claims are listed too: HashRouter, the `build/icon.ico` + `extraResources` packaging, the
+  `electron/security/` modules, the session-aware `isAdmin`, and HANDOFF's "no security fix has
+  been made". Report-only rows: README:754-761 (default credentials, Q8 — not edited).
+  No application file and no README wording changed in this commit; the approved wording lands in
+  a separate `p1d cp2b` commit.
+  Manual check: open `docs/security/p1d-doc-corrections.md` and spot-check §2 against
+  `electron/preload.js` (47 keys) and `package.json` (build block).
+- **P1D cp2b (2026-10-27)** — P1 Q10: applied the approved wording (README RM1–RM10, RM13–RM21;
+  HANDOFF HH1–HH6) in `README.md` and `HANDOFF.md` only. Every replaced claim now states what the
+  code does: **47** channels / methods / handlers (was "39"), 28 test files / 304 tests (was 9 /
+  109), `HashRouter` instead of `BrowserRouter`, the real `isAdmin` (session + `role, status`),
+  `build/icon.ico` + `extraResources` + `afterPack` in the packaging section, `electron/security/`,
+  `scripts/afterPack.cjs`, `build/` and the legacy `database/` folder in the structure tree, the
+  renderer's five `logs:add` call sites, the two-part session, and **no WAL** (SQLite's default
+  `delete` journal; no `journal_mode` pragma exists). Residual weaknesses kept visible: no
+  password-change feature, `logs:add` still renderer-callable (R10), plaintext database, and a
+  new Known-Limitations row for out-of-support Electron 28.3.3 (R15). RM11/RM12 (the default
+  credentials table and the password-change note at README:761) were **not** touched — Q8.
+  `REFACTOR_SMOKE_TEST.md` SM1 was approved by name but left unchanged because the instruction
+  limited edits to `README.md`, `HANDOFF.md` and `docs/`; flagged for the owner.
+  No code, IPC, schema or test changed. Manual check: `git diff --stat` shows only the two
+  markdown files plus this line; README §7 lists 47 methods and §8 shows the session-aware
+  `isAdmin`; the §17 answers no longer mention WAL.
+- **P1D cp3 (2026-10-27)** — P1 Q10, SRS/slides support: added
+  `docs/security/p1d-srs-slides-notes.md` with the measured facts (47 channels, 47 methods,
+  27 admin-guarded, 2 session-only, 18 unguarded, 28 files / 304 tests, Electron 28.3.3,
+  better-sqlite3 9.6.0, React 18.3.1, TypeScript 5.9.3, HashRouter, default SQLite journal,
+  bcrypt cost 10, `userData\Archive`), nine ready-to-paste corrected statements, a Q-by-Q table
+  of what Phase 1 now protects against, and an explicit limitation list (unguarded channels,
+  default credentials as Q8 manual work, no throttling, string-only path containment, no
+  extension allowlist, no size limits, forgeable `logs:add`, backup-restore trust, no CSP,
+  Electron 28, plaintext data at rest, reload/restore residual risks). §5 records that README §3
+  still printed the declared version ranges at that point — it was not in the approved edit list
+  then; the owner approved the change separately, and it landed in `p1d cp3c` (see below). §6
+  lists the commands used, so every number can be re-derived. No code or README change.
+  Manual check: pick any number in §1 and re-run the matching command from §6.
+- **P1D cp3b (2026-10-27)** — P1 Q10, smoke test: added the reload caveat to
+  `REFACTOR_SMOKE_TEST.md` §1, one line only. The owner widened the doc-only scope for this file
+  by name. It now reads that a reload drops the renderer's `sessionStorage` but not the
+  main-process session (register R18), so the login screen reappearing is UI behaviour, not a
+  cleared session. No code changed. *(This line was missed in the cp3b commit itself; it is added
+  here rather than by amending that commit.)*
+  Manual check: reload `npm run dev` while logged in — login screen, same as before.
+- **P1D cp3c (2026-10-27)** — P1 Q10, README §3: the stack table now shows the **installed**
+  versions read from `package-lock.json` (Electron 28.3.3, React 18.3.1, TypeScript 5.9.3, Vite
+  5.4.21, Tailwind 4.3.3, React Router 6.30.6, better-sqlite3 9.6.0, bcryptjs 2.4.3, archiver
+  7.0.1, adm-zip 0.6.1, lucide-react 1.46.0, jscanify 1.4.3, the two `@fontsource` packages)
+  instead of the `package.json` ranges, and the heading says where they come from. Layout
+  unchanged. No code changed. *(This line was missed in the cp3c commit itself; it is added here
+  rather than by amending that commit.)*
+  Manual check: compare three rows with `node -p "require('./node_modules/electron/package.json').version"`.
+- **P1D cp4 (2026-10-27)** — P1 Q10, verification record: added
+  `docs/security/PHASE1_VERIFICATION.md` — exactly 13 rows Q1–Q13, each with the status, the real
+  commit message from `git log`, the test file from `tests/` and a manual check; Q8 and Q9 are
+  `manual: not implemented here` with a two-line procedure each (Q8: new admin with a strong
+  password, log in with it, deactivate the default accounts — after the team confirms the UI can
+  do it, since no password-change feature exists). The real results are recorded: typecheck PASS,
+  build PASS, 28 files / 304 tests, lint 0 errors / 112 warnings, packaging not run by
+  instruction. `docs/SECURITY_REGISTER.md` gained R24 (documentation described a different build)
+  and R25 (date helpers threw on a bad value), both `fixed`, plus the P1D phase-log rows and a
+  P1D manual smoke test in §11. No application code, IPC or schema changed.
+  Manual check: `git log --oneline --grep="^p1"` messages match the table verbatim; run the three
+  counts in the Q10 row.
+

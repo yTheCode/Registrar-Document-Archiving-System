@@ -10,7 +10,7 @@ Legend: each step = Action -> Expected result.
 
 - [ ] Login with valid admin credentials -> session starts, dashboard renders.
 - [ ] Login with wrong password -> error message, no session created.
-- [ ] Reload app while logged in (`npm run dev`, sessionStorage cleared on restart) -> back at login screen.
+- [ ] Reload app while logged in (`npm run dev`, sessionStorage cleared on restart) -> back at login screen (UI only: the main-process session survives a reload, register R18).
 - [ ] Logout -> returns to login screen; navigating back (URL) does not expose data.
 - [ ] Login as non-admin user -> routes `/import`, `/settings`, `/logs` are NOT reachable
       (redirect to dashboard); nav items hidden or inactive as designed.
