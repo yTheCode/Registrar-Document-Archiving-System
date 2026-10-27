@@ -90,24 +90,24 @@ The Chromium renderer process that runs the React UI is sandboxed. It cannot imp
 
 ## 3. Technology Stack & Rationale
 
-### Verified package versions (from `package.json`)
+### Installed package versions (from `package-lock.json`)
 
 | Package | Version | Role | Architectural rationale |
 |---|---|---|---|
-| **Electron** | 28.1 | Desktop shell | Provides Chromium renderer + Node.js main process in a single distributable; enables file-system access, native dialogs, and offline operation without a web server |
-| **React** | 18.2 | UI library | Component model enables isolated, reusable UI pieces with predictable state management; the unidirectional data-flow pattern maps cleanly onto the IPC request/response cycle |
-| **TypeScript** | 5.3 | Type system | Strict mode (`"strict": true`, `noUnusedLocals`, `noUnusedParameters`) catches interface mismatches between the preload bridge, IPC handlers, and React components at compile time, not at runtime |
-| **Vite** | 5.0 | Build tool | Sub-second hot-module replacement in development; produces a minified single-bundle output in `dist/` for the packaged app |
-| **Tailwind CSS** | 4.0-beta | Styling | Utility classes eliminate a separate stylesheet abstraction layer; co-location of style and structure in `.tsx` files simplifies maintenance |
-| **React Router** | 6.21 | Client-side routing | `HashRouter`: the packaged app runs from a `file://` document, so routes live in the URL hash and the document URL stays `dist/index.html`; routes are protected at the component level and in `App.tsx` |
-| **better-sqlite3** | 9.2 | SQLite driver | Synchronous API eliminates callback/Promise complexity for database operations inside IPC handlers; significantly faster than `node-sqlite3` for the read-heavy query patterns in this application |
-| **bcryptjs** | 2.4 | Password hashing | Pure-JavaScript implementation; no native compilation needed, which avoids the `NODE_MODULE_VERSION` mismatch that plagues native modules when Electron's Node.js version differs from the system Node.js |
-| **archiver** | 7.0 | Backup creation | Streaming ZIP creation with configurable compression; used to bundle database + archive folder |
-| **adm-zip** | 0.6 | Backup extraction | Synchronous ZIP extraction used during the restore flow |
-| **lucide-react** | 1.44 | Icons | Tree-shakeable SVG icon set; unused icons are excluded from the production bundle |
+| **Electron** | 28.3.3 | Desktop shell | Provides Chromium renderer + Node.js main process in a single distributable; enables file-system access, native dialogs, and offline operation without a web server |
+| **React** | 18.3.1 | UI library | Component model enables isolated, reusable UI pieces with predictable state management; the unidirectional data-flow pattern maps cleanly onto the IPC request/response cycle |
+| **TypeScript** | 5.9.3 | Type system | Strict mode (`"strict": true`, `noUnusedLocals`, `noUnusedParameters`) catches interface mismatches between the preload bridge, IPC handlers, and React components at compile time, not at runtime |
+| **Vite** | 5.4.21 | Build tool | Sub-second hot-module replacement in development; produces a minified single-bundle output in `dist/` for the packaged app |
+| **Tailwind CSS** | 4.3.3 | Styling | Utility classes eliminate a separate stylesheet abstraction layer; co-location of style and structure in `.tsx` files simplifies maintenance |
+| **React Router** | 6.30.6 | Client-side routing | `HashRouter`: the packaged app runs from a `file://` document, so routes live in the URL hash and the document URL stays `dist/index.html`; routes are protected at the component level and in `App.tsx` |
+| **better-sqlite3** | 9.6.0 | SQLite driver | Synchronous API eliminates callback/Promise complexity for database operations inside IPC handlers; significantly faster than `node-sqlite3` for the read-heavy query patterns in this application |
+| **bcryptjs** | 2.4.3 | Password hashing | Pure-JavaScript implementation; no native compilation needed, which avoids the `NODE_MODULE_VERSION` mismatch that plagues native modules when Electron's Node.js version differs from the system Node.js |
+| **archiver** | 7.0.1 | Backup creation | Streaming ZIP creation with configurable compression; used to bundle database + archive folder |
+| **adm-zip** | 0.6.1 | Backup extraction | Synchronous ZIP extraction used during the restore flow |
+| **lucide-react** | 1.46.0 | Icons | Tree-shakeable SVG icon set; unused icons are excluded from the production bundle |
 | **jscanify** | 1.4.3 (dev) | Document scanning | OpenCV-based paper-contour detection; copied as a local static asset at build time so no network fetch occurs at runtime |
-| **@fontsource/dm-sans** | 5.3 | Body typography | Self-hosted font; no Google Fonts CDN call |
-| **@fontsource/space-mono** | 5.3 | Monospace typography | Self-hosted font; used for file names and code-like data |
+| **@fontsource/dm-sans** | 5.3.0 | Body typography | Self-hosted font; no Google Fonts CDN call |
+| **@fontsource/space-mono** | 5.3.0 | Monospace typography | Self-hosted font; used for file names and code-like data |
 
 ### Key trade-offs
 
