@@ -1494,4 +1494,25 @@ Follow-ups deliberately deferred until the defense pass is finished.
   Manual check: in the packaged build, log in and visit Dashboard, Students, Search, Help and
   (as admin) Import, Settings and Logs — each fills the content area, and scanning still loads
   OpenCV.
+- **P1B cp7b (2026-10-27)** — Window icon and in-app logo. The title-bar icon looked cropped
+  because `build.win.icon` pointed at `src/assets/adzu-seal.png`, a 768×764 non-square PNG, and
+  the BrowserWindow `icon` pointed into `src/assets`, which is not in `build.files` once
+  packaged, so Windows fell back to the same cropped exe icon. `build/icon.ico` (verified 16,
+  24, 32, 48, 64, 128 and 256; every entry 32bpp) is now the exe icon via `build.win.icon`.
+  `build/` is electron-builder's resources folder, used at build time and not packed, so
+  `build/icon.png` reaches the installed app through
+  `extraResources: [{ from: "build/icon.png", to: "icon.png" }]` (asar stays on for the app).
+  `main.cjs` reads `process.resourcesPath/icon.png` when packaged and `../build/icon.png` in
+  dev, so the BrowserWindow icon resolves in both. On screen the AdZU seal is replaced by
+  `src/assets/logo-256.png` in the sidebar (`h-16 w-16`) and both login placements (`h-9 w-9`
+  and `172×172`) with alt text "AdZU Registrar Archive logo"; sizes, classes and containers are
+  unchanged, and the round logo needs no new radius or background. `src/assets/adzu-seal.png`
+  stays in the tree, unreferenced; no print header, document template or export used it (the
+  print page carries only the document image), so nothing printed changed.
+  4 tests in `windowIconWiring.test.ts`: the `package.json` icon and `extraResources` paths, the
+  packaged/dev resolution (and that `main.cjs` no longer names the seal), the ICO directory
+  sizes, and the three logo placements with their unchanged classes.
+  Manual check: the dev window shows the round logo uncropped in the title bar; the installed
+  build shows the same icon with no seal fallback; sidebar and login show the new logo at the
+  old sizes.
 

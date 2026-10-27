@@ -21,6 +21,12 @@ const INDEX_HTML_PATH = path.join(__dirname, '../dist/index.html');
 // process, and it reads nothing from the environment.
 const { isDev, devServerUrl, devTools } = resolveRuntimeMode({ isPackaged: app.isPackaged });
 
+// build/ is not inside the asar: electron-builder copies build/icon.png to
+// resources/icon.png (extraResources) and points the exe at build/icon.ico.
+const WINDOW_ICON_PATH = isDev
+  ? path.join(__dirname, '../build/icon.png')
+  : path.join(process.resourcesPath, 'icon.png');
+
 // Q6: the only pages allowed to call IPC are the ones this process loads into
 // the main window.
 const isAllowedUrl = createUrlPolicy({
@@ -49,7 +55,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js')
     },
     autoHideMenuBar: true,
-    icon: path.join(__dirname, '../src/assets/adzu-seal.png')
+    icon: WINDOW_ICON_PATH
   });
   setMainWindow(mainWindow);
 

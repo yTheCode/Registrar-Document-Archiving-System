@@ -2,7 +2,7 @@ import { Link, useLocation } from 'react-router-dom'
 import { LayoutDashboard, Users, Search, Upload, Settings, Activity, LogOut, User, UserCog, HelpCircle } from 'lucide-react'
 import type { ReactNode } from 'react'
 import type { User as SessionUser } from '@/types'
-import adzuSeal from '@/assets/adzu-seal.png'
+import appLogo from '@/assets/logo-256.png'
 
 interface LayoutProps {
   user: SessionUser
@@ -38,8 +38,8 @@ function Layout({ user, onLogout, children }: LayoutProps) {
         {/* Header */}
         <div className="p-5 border-b border-[#1a2942]">
           <img
-            src={adzuSeal}
-            alt="Ateneo de Zamboanga University seal"
+            src={appLogo}
+            alt="AdZU Registrar Archive logo"
             className="mx-auto mb-3 h-16 w-16 object-contain"
           />
           <h2 className="text-center text-[15px] font-bold leading-snug text-[#d4a843] mb-4">
