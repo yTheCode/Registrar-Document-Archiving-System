@@ -4,14 +4,17 @@ import { describe, expect, it } from 'vitest'
 // Pure module: no electron or paths import, so it loads in Node. Required via
 // createRequire so the .cjs stays a plain CJS graph with nothing stubbed.
 const require = createRequire(import.meta.url)
-const { createSenderGuard } = require('../../../electron/security/senderGuard.cjs') as {
+const { createSenderGuard, createUrlPolicy } = require('../../../electron/security/senderGuard.cjs') as {
   createSenderGuard: (deps?: {
     getMainWebContents?: () => unknown
     isAllowedUrl?: (url: string) => boolean
   }) => (event: unknown) => boolean
+  createUrlPolicy: (options: { indexFileUrl: string; devServerOrigin: string | null }) => (url: unknown) => boolean
 }
 
 const INDEX_URL = 'file:///C:/app/dist/index.html'
+// The real Q6 policy, so these cases prove the guard and the policy agree.
+const realPolicy = () => createUrlPolicy({ indexFileUrl: INDEX_URL, devServerOrigin: null })
 
 function makeWorld({ url = INDEX_URL, allowed = (u: string) => u === INDEX_URL } = {}) {
   const mainFrame = { frameTreeNodeId: 1, url }
@@ -54,6 +57,23 @@ describe('createSenderGuard', () => {
     const { validate, webContents, mainFrame, calls } = makeWorld()
     validate({ sender: webContents, senderFrame: mainFrame })
     expect(calls).toEqual([INDEX_URL])
+  })
+
+  it('accepts the main frame on the index page with a HashRouter route', () => {
+    const { validate, webContents, mainFrame } = makeWorld({
+      url: `${INDEX_URL}#/students`,
+      allowed: realPolicy()
+    })
+    expect(validate({ sender: webContents, senderFrame: mainFrame })).toBe(true)
+  })
+
+  it('still rejects any other file, hash route and all', () => {
+    const allowed = realPolicy()
+    const { validate, webContents, mainFrame } = makeWorld({
+      url: 'file:///C:/app/dist/other.html#/students',
+      allowed
+    })
+    expect(validate({ sender: webContents, senderFrame: mainFrame })).toBe(false)
   })
 
   it('rejects a destroyed or missing event frame', () => {

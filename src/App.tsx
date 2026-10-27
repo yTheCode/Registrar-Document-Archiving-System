@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react'
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
+// HashRouter, not BrowserRouter: the packaged app runs from a file:// document,
+// where history-API paths resolve to sibling files that do not exist.
+import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Students from './pages/Students'

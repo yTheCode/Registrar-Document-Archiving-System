@@ -27,9 +27,25 @@ describe('createUrlPolicy (packaged)', () => {
     expect(isAllowed(`${INDEX_URL}#/students`)).toBe(true)
   })
 
-  it('allows the route URLs BrowserRouter pushes onto a file:// document', () => {
-    // Verified against the packaged build: these are the hrefs the app holds
-    // after the "/" route and after navigating to Students.
+  it('allows every hash route the app defines on its own index.html', () => {
+    for (const route of ['#/', '#/search', '#/students', '#/help', '#/import', '#/settings', '#/logs']) {
+      expect(`${route}: ${isAllowed(`${INDEX_URL}${route}`)}`).toBe(`${route}: true`)
+    }
+    expect(isAllowed(`${INDEX_URL}#/students?query=ana`)).toBe(true)
+  })
+
+  it('does not let a hash route admit a different file', () => {
+    expect(isAllowed('file:///D:/CODE%20STUFF/app/dist/other.html#/students')).toBe(false)
+    expect(isAllowed(`${INDEX_URL}.evil#/students`)).toBe(false)
+    expect(isAllowed('file:///D:/CODE%20STUFF/app/dist/#/students')).toBe(false)
+    expect(isAllowed('file:///D:/CODE%20STUFF/app/dist/deep/index.html#/students')).toBe(false)
+    expect(isAllowed('file:///C:/CODE%20STUFF/app/dist/index.html#/students')).toBe(false)
+    expect(isAllowed('https://evil.example/index.html#/students')).toBe(false)
+  })
+
+  it('still allows the flat drive-root route URLs BrowserRouter pushed (now unused)', () => {
+    // Kept as-is after the move to HashRouter: the app no longer produces these,
+    // but the allowance is a deliberate leftover, not an accident.
     expect(isAllowed('file:///D:/')).toBe(true)
     expect(isAllowed('file:///D:/students')).toBe(true)
   })

@@ -48,6 +48,20 @@ describe('decideNavigation', () => {
     expect(decideNavigation({ url: 'https://example.com', isAllowedUrl })).toBe(false)
   })
 
+  it('always allows the hashed index URL HashRouter keeps in the address bar', () => {
+    const isAllowedUrl = policy()
+    for (const hash of ['#/', '#/students', '#/help?from=students']) {
+      expect(`${hash}: ${decideNavigation({ url: `${INDEX_URL}${hash}`, isAllowedUrl })}`).toBe(`${hash}: true`)
+    }
+  })
+
+  it('a hash route cannot carry a different document through the gate', () => {
+    const isAllowedUrl = policy()
+    expect(decideNavigation({ url: 'file:///D:/evil.html#/students', isAllowedUrl })).toBe(false)
+    expect(decideNavigation({ url: 'file:///D:/apps/adzu/dist/other.html#/students', isAllowedUrl })).toBe(false)
+    expect(decideNavigation({ url: 'https://evil.example/#/students', isAllowedUrl })).toBe(false)
+  })
+
   it('fails closed on bad input or a throwing policy', () => {
     const isAllowedUrl = policy()
     expect(decideNavigation()).toBe(false)

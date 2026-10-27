@@ -25,6 +25,14 @@ describe('navigation, pop-up and permission wiring (Q7)', () => {
     expect(body).toContain('if (!decideNavigation({ url, isAllowedUrl })) event.preventDefault()')
   })
 
+  it('gates document navigations only, never in-page hash changes', () => {
+    const body = createWindow()
+    // HashRouter changes the fragment, which Electron reports as
+    // did-navigate-in-page, not will-navigate. If the gate were also put on the
+    // in-page event, the policy would have to allow every route the app opens.
+    expect(body).not.toContain('did-navigate-in-page')
+  })
+
   it('blocks webviews', () => {
     expect(createWindow()).toContain("mainWindow.webContents.on('will-attach-webview', event => event.preventDefault())")
   })

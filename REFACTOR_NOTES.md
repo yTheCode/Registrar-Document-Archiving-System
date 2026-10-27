@@ -1473,3 +1473,25 @@ Follow-ups deliberately deferred until the defense pass is finished.
   in `navGuardWiring.test.ts`; register R22 records the rationale.
   Manual check: the camera dropdown lists real device names, and `getUserMedia({ audio: true })`
   still fails.
+- **P1B cp7 (2026-10-27)** — Q6 follow-up: the packaged app logged in but the content area stayed
+  blank on every page. Cause: BrowserRouter writes history-API paths onto a `file://` document,
+  so `/students` becomes `file:///D:/students`, a file that does not exist; the same wrong
+  `document.baseURI` also breaks the relative `scanner/opencv.js` and `scanner/jscanify.js`
+  loads. `src/App.tsx` now mounts `HashRouter` and every route path and the admin-only route
+  block are unchanged; `useLocation().pathname` still returns `/students`, so `Layout`'s active
+  link logic did not need a change. Why this is safe for Q6/Q7: the document URL stays
+  `dist/index.html`, the route lives in the fragment, and `will-navigate` is not emitted for a
+  fragment-only change (Electron reports those as `did-navigate-in-page`, which the main
+  process does not listen for). No URL-policy rule was loosened. Tests: `urlPolicy.test.ts` now
+  covers every hash route on the packaged index plus other files, paths, drives and hosts
+  denied behind a hash; `senderGuard.test.ts` runs the real policy against a hashed main frame;
+  `navGuard.test.ts` covers the hashed index at the navigation gate; new
+  `hashRouterWiring.test.ts` pins HashRouter, the unchanged route paths and that `main.tsx`
+  mounts no router; `navGuardWiring.test.ts` pins that the gate stays on `will-navigate` only.
+  Register R20 marked resolved, with notes that the flat BrowserRouter-style route allowance is
+  now unused (removable later) and that an `app://` protocol with BrowserRouter is a possible
+  future improvement.
+  Manual check: in the packaged build, log in and visit Dashboard, Students, Search, Help and
+  (as admin) Import, Settings and Logs — each fills the content area, and scanning still loads
+  OpenCV.
+
