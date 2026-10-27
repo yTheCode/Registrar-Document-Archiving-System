@@ -7,6 +7,7 @@ const { getDb } = require('../db/connection.cjs');
 const { isAdmin } = require('../services/authz.cjs');
 const { validateAndResolvePath, resolveArchivePath } = require('../services/archivePaths.cjs');
 const { sessionPickedFiles } = require('../services/pickedFiles.cjs');
+const { isPickedPath } = require('../security/pickedFiles.cjs');
 const { resolveRuntimeMode } = require('../security/runtimeMode.cjs');
 
 // Q2: DevTools exist only in a dev build, on every window this process creates.
@@ -16,6 +17,13 @@ const { devTools } = resolveRuntimeMode({ isPackaged: app.isPackaged });
 // File operations
 ipcMain.handle('file:copy', async (event, { sourcePath, destPath }) => {
   try {
+    // Q3: only a file the user picked in the Open dialog this session may be
+    // copied in, so the renderer cannot pull the database or any other
+    // readable file into the archive and read it back through it.
+    if (!isPickedPath(sourcePath, sessionPickedFiles)) {
+      return { success: false, error: 'Only files chosen in the Open dialog can be imported.' };
+    }
+
     // Get archive root from settings
     const archiveSetting = getDb().prepare('SELECT value FROM settings WHERE key = ?').get('archive_directory');
     const archiveRoot = archiveSetting?.value || path.join(app.getPath('documents'), 'ADZU_Archive');

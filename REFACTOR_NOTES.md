@@ -1516,3 +1516,47 @@ Follow-ups deliberately deferred until the defense pass is finished.
   build shows the same icon with no seal fallback; sidebar and login show the new logo at the
   old sizes.
 
+- **P1C cp1 (2026-10-27)** — Phase 1C analysis (`docs/security/p1c-analysis.md`). **Q3:** the
+  picked-file set is filled only by `dialog:openFile` (`path.resolve` per entry) and has one
+  renderer consumer that can reach `file:copy` — `ImportScannerPage.tsx:1068`, whose `sourcePath`
+  is always a dialog-picked absolute path (camera and edited rows carry `isDataUrl`/
+  `editedDataUrl` and go to `image:saveBase64`; there is no drag-and-drop, no file input and no
+  re-import). `file:copy` itself never checked the source. Membership was exact-string
+  (`Set.has`) with no case folding. **Q11:** all six archive-root computations confirmed — four
+  use `Documents\ADZU_Archive` (`archivePaths.cjs:30`, `files.ipc.cjs:21`, `images.ipc.cjs:15`,
+  `archiveMigrations.cjs:17`) and two use `userData\Archive` (`connection.cjs:163`,
+  `backup.cjs:27`); none trims. With the setting missing or blank, imports land in
+  `Documents\ADZU_Archive` while `backup:create` looks in `userData\Archive` and silently
+  produces a database-only ZIP. Five extra places recorded: `validateAndResolvePath`'s fallback
+  to plain `Documents` (`archivePaths.cjs:12`), `folderNaming.cjs:36`, the renderer's relative
+  `'Archive'` fallback (`ImportScannerPage.tsx:1028`), `settings:set` as an unvalidated writer,
+  and `resolveArchiveDir(probe)` on the backup database (must keep reading the backup's own
+  setting; `backup.ipc.cjs:151` is only the ZIP entry name). No application code changed.
+  Why: both fixes must start from verified call sites, and the phase prompt makes an unpicked
+  caller a stop condition. Manual check: `git diff --stat` shows only `docs/security/` plus this
+  line; the cited lines open on `security/p1c-files-and-paths`.
+- **P1C cp2 (2026-10-27)** — Q3: `file:copy` now rejects any source the user did not pick in the
+  Open dialog. New pure `electron/security/pickedFiles.cjs` (`normalizePickedPath`,
+  `isPickedPath`) normalises **both** sides the same way — `path.resolve` (Windows semantics),
+  then case folding on win32 only — and returns null/false for non-strings, empty,
+  whitespace-only and NUL-bearing values. `file:copy` calls it first and returns
+  `{ success: false, error: 'Only files chosen in the Open dialog can be imported.' }`
+  (signature unchanged; destination validation untouched). `dialog:openFile` still stores
+  `path.resolve(picked)` — **no change was required there**, because normalisation happens
+  inside the matcher on the set's entries too, so a mixed-slash or differently-cased set member
+  still matches and a differently-cased renderer string still matches. Fail-closed corners
+  pinned by tests: `\?\C:\…` long-path spelling of a picked file is rejected, and a relative
+  path is accepted only when it resolves to the picked file. `file:readPickedAsBase64` keeps its
+  exact-string check (unchanged, and stricter, so this commit does not loosen it).
+  23 tests in `tests/electron/security/pickedFiles.test.ts`: normalisation (absolute, lower-case,
+  slash/segment collapsing, trimming, null/blank/non-string/NUL, posix case preserved) and
+  membership (exact, different file, different casing both directions, mixed slashes, relative
+  identity vs traversal, system path, database path, UNC rejected unless picked, long-path
+  prefix, empty set/null set/junk entries, posix case sensitivity), plus 5 source-level pins on
+  `files.ipc.cjs` (import, unchanged channel signature, the check runs before
+  `validateAndResolvePath`/`copyFileSync`, the failure shape, and the old destination checks).
+  Why: register R6 — `file:copy` validated only the destination, so the renderer could copy the
+  database or any readable file into the archive and read it back with `file:readAsBase64`.
+  Manual check: import through the dialog works; in DevTools
+  `window.electronAPI.copyFile('C:\Windows\win.ini', <path inside the archive>)` returns
+  `success: false` and copies nothing, while the dialog-picked file still imports.
