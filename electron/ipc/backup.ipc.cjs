@@ -7,6 +7,7 @@ const { dbPath } = require('../paths.cjs');
 const { getDb, setDb, registerDbFunctions } = require('../db/connection.cjs');
 const { runMigrations } = require('../db/migrations.cjs');
 const { isAdmin } = require('../services/authz.cjs');
+const { ensureArchiveSetting } = require('../services/archivePaths.cjs');
 const { isSafeArchiveTarget, resolveArchiveDir, inspectBackupDatabase, removeDatabaseSidecars } = require('../services/backup.cjs');
 
 
@@ -191,6 +192,11 @@ ipcMain.handle('backup:restore', async (event, userId) => {
     // leaving the rest of this session running against unmigrated tables.
     runMigrations();
 
+    // Q11: the restored database may have no archive setting at all. Write the
+    // shared default now, so the folder this handler is about to replace is
+    // the folder every later consumer reads from.
+    ensureArchiveSetting();
+
     // Replace Archive folder
     if (hasArchiveInBackup) {
       console.log('Replacing archive folder...');
@@ -247,6 +253,7 @@ ipcMain.handle('backup:restore', async (event, userId) => {
         registerDbFunctions(getDb());
         dbClosed = false;
         runMigrations();
+        ensureArchiveSetting();
       }
       fs.rmSync(safetyDbPath, { force: true });
     } catch (recoverError) {

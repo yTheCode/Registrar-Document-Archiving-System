@@ -1,11 +1,9 @@
 // The single better-sqlite3 handle for the main process. The handle is
 // reassigned at runtime (backup/restore closes and reopens it), so consumers
 // must call getDb() at use time — never capture the handle at require time.
-const path = require('path');
-const fs = require('fs');
 const Database = require('better-sqlite3');
 const bcrypt = require('bcryptjs');
-const { userDataPath, dbPath } = require('../paths.cjs');
+const { dbPath } = require('../paths.cjs');
 const { runMigrations } = require('./migrations.cjs');
 
 let db;
@@ -157,15 +155,12 @@ function initializeDatabase() {
   // Run migrations to update existing databases
   runMigrations();
 
-  // Set default archive directory if not set
-  const archiveDir = db.prepare('SELECT value FROM settings WHERE key = ?').get('archive_directory');
-  if (!archiveDir) {
-    const defaultArchive = path.join(userDataPath, 'Archive');
-    if (!fs.existsSync(defaultArchive)) {
-      fs.mkdirSync(defaultArchive, { recursive: true });
-    }
-    db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run('archive_directory', defaultArchive);
-  }
+  // Q11: one archive root. This writes the shared default (paths.cjs
+  // DEFAULT_ARCHIVE_ROOT) when the row is missing or blank and creates that
+  // folder. Required lazily: archivePaths requires this module for getDb(), so
+  // a load-time require here would close that cycle and hand it an empty
+  // exports object.
+  require('../services/archivePaths.cjs').ensureArchiveSetting(db);
 
   console.log('Database initialized at:', dbPath);
 }

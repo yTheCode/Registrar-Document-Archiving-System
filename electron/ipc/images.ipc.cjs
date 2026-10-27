@@ -1,18 +1,16 @@
 // image:saveBase64 (moved verbatim from main.cjs in phase 1b).
-const { app, ipcMain } = require('electron');
+const { ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { getDb } = require('../db/connection.cjs');
-const { validateAndResolvePath } = require('../services/archivePaths.cjs');
+const { getArchiveRoot, validateAndResolvePath } = require('../services/archivePaths.cjs');
 
 
 // ==================== IMAGE OPERATIONS ====================
 
 ipcMain.handle('image:saveBase64', async (event, { base64Data, fileName, destPath }) => {
   try {
-    // Get archive root from settings
-    const archiveSetting = getDb().prepare('SELECT value FROM settings WHERE key = ?').get('archive_directory');
-    const archiveRoot = archiveSetting?.value || path.join(app.getPath('documents'), 'ADZU_Archive');
+    // Q11: the one archive root (setting, trimmed, or the shared default)
+    const archiveRoot = getArchiveRoot();
     
     // Validate path to prevent traversal attacks
     const validation = validateAndResolvePath(destPath, archiveRoot);

@@ -1516,3 +1516,127 @@ Follow-ups deliberately deferred until the defense pass is finished.
   build shows the same icon with no seal fallback; sidebar and login show the new logo at the
   old sizes.
 
+- **P1C cp1 (2026-10-27)** — Phase 1C analysis (`docs/security/p1c-analysis.md`). **Q3:** the
+  picked-file set is filled only by `dialog:openFile` (`path.resolve` per entry) and has one
+  renderer consumer that can reach `file:copy` — `ImportScannerPage.tsx:1068`, whose `sourcePath`
+  is always a dialog-picked absolute path (camera and edited rows carry `isDataUrl`/
+  `editedDataUrl` and go to `image:saveBase64`; there is no drag-and-drop, no file input and no
+  re-import). `file:copy` itself never checked the source. Membership was exact-string
+  (`Set.has`) with no case folding. **Q11:** all six archive-root computations confirmed — four
+  use `Documents\ADZU_Archive` (`archivePaths.cjs:30`, `files.ipc.cjs:21`, `images.ipc.cjs:15`,
+  `archiveMigrations.cjs:17`) and two use `userData\Archive` (`connection.cjs:163`,
+  `backup.cjs:27`); none trims. With the setting missing or blank, imports land in
+  `Documents\ADZU_Archive` while `backup:create` looks in `userData\Archive` and silently
+  produces a database-only ZIP. Five extra places recorded: `validateAndResolvePath`'s fallback
+  to plain `Documents` (`archivePaths.cjs:12`), `folderNaming.cjs:36`, the renderer's relative
+  `'Archive'` fallback (`ImportScannerPage.tsx:1028`), `settings:set` as an unvalidated writer,
+  and `resolveArchiveDir(probe)` on the backup database (must keep reading the backup's own
+  setting; `backup.ipc.cjs:151` is only the ZIP entry name). No application code changed.
+  Why: both fixes must start from verified call sites, and the phase prompt makes an unpicked
+  caller a stop condition. Manual check: `git diff --stat` shows only `docs/security/` plus this
+  line; the cited lines open on `security/p1c-files-and-paths`.
+- **P1C cp2 (2026-10-27)** — Q3: `file:copy` now rejects any source the user did not pick in the
+  Open dialog. New pure `electron/security/pickedFiles.cjs` (`normalizePickedPath`,
+  `isPickedPath`) normalises **both** sides the same way — `path.resolve` (Windows semantics),
+  then case folding on win32 only — and returns null/false for non-strings, empty,
+  whitespace-only and NUL-bearing values. `file:copy` calls it first and returns
+  `{ success: false, error: 'Only files chosen in the Open dialog can be imported.' }`
+  (signature unchanged; destination validation untouched). `dialog:openFile` still stores
+  `path.resolve(picked)` — **no change was required there**, because normalisation happens
+  inside the matcher on the set's entries too, so a mixed-slash or differently-cased set member
+  still matches and a differently-cased renderer string still matches. Fail-closed corners
+  pinned by tests: a long-path-prefixed (`\\?\`) spelling of a picked file is rejected, and a
+  relative path is now rejected outright (see cp2b below). `file:readPickedAsBase64` keeps its
+  exact-string check (unchanged, and stricter, so this commit does not loosen it).
+  **cp2b (same checkpoint, follow-up commit):** `normalizePickedPath` now requires
+  `path.win32.isAbsolute` on the raw value before resolving, so every relative source is refused
+  even when it would have resolved to a picked file. Reason: the result must not depend on the
+  process working directory, which is never the user's folder. Drive-letter absolute paths and
+  UNC paths that are in the picked set still work, and the long-path `\\?\` form is still a
+  distinct (rejected) string. The relative-path test now expects rejection on both platforms,
+  and a new test pins `file.pdf`, `.\Docs\file.pdf` and the drive-relative `C:file.pdf` as null.
+  24 tests in `tests/electron/security/pickedFiles.test.ts`: normalisation (absolute, lower-case,
+  slash/segment collapsing, trimming, null/blank/non-string/NUL, relative null, posix case
+  preserved) and membership (exact, different file, different casing both directions, mixed
+  slashes, relative rejected, traversal, system path, database path, UNC rejected unless picked,
+  long-path prefix, empty set/null set/junk entries, posix case sensitivity), plus 5 source-level pins on
+  `files.ipc.cjs` (import, unchanged channel signature, the check runs before
+  `validateAndResolvePath`/`copyFileSync`, the failure shape, and the old destination checks).
+  Why: register R6 — `file:copy` validated only the destination, so the renderer could copy the
+  database or any readable file into the archive and read it back with `file:readAsBase64`.
+  Manual check: import through the dialog works; in DevTools
+  `window.electronAPI.copyFile('C:\\Windows\\win.ini', <path inside the archive>)` returns
+  `success: false` and copies nothing, while the dialog-picked file still imports.
+- **P1C cp3 (2026-10-27)** — Q11: one archive root. `electron/paths.cjs` now exports
+  `DEFAULT_ARCHIVE_ROOT = path.join(userDataPath, 'Archive')`, and the new pure
+  `electron/security/archiveRoot.cjs` (`resolveArchiveRoot(settingValue, defaultRoot)`) decides
+  between a **trimmed** stored value and that default — so a whitespace-only setting can never
+  become a path (it used to resolve to the process working directory). `services/archivePaths.cjs`
+  gained `getArchiveRoot(handle)` (optional handle, so existing no-argument calls are unchanged)
+  and `ensureArchiveSetting(handle)`, which writes the default when the row is missing or blank
+  and creates the folder; a configured custom root is never rewritten and never created there.
+  Every archive-root consumer now goes through them: `file:copy`, `image:saveBase64`,
+  `migrateDocumentTypeFolders`, `resolveArchivePath`, `toArchiveRelative`, `validateAndResolvePath`
+  (its fallback was plain `Documents` and is now `getArchiveRoot()`; the module no longer needs
+  `electron`), `computeDocumentTypeFolder` (`resolveArchiveRoot(archiveRoot, null) ||
+  getArchiveRoot()`, so a blank renderer value cannot win), `backup:create` via
+  `resolveArchiveDir(handle)` (same trimmed rule, same default), and the backup probe path that
+  reads a **backup's own** database. `initializeDatabase` calls `ensureArchiveSetting(db)` in
+  place of its private default block — required lazily inside the function, because
+  `archivePaths` requires `db/connection` for `getDb()` and a load-time require would close that
+  cycle. `backup:restore` calls `ensureArchiveSetting()` after `runMigrations()` on both the
+  success path and the recovery path, so the folder it just replaced is the folder the restored
+  database reads from. `settings:set` now refuses `archive_directory` (after the admin check,
+  before the write) and points at Settings → Archive Location. Renderer fallback fixed
+  (recorded as **place 9** in `docs/security/p1c-analysis.md` §2.2, called "place 7" in the
+  phase instruction): `ImportScannerPage` passes `archiveResult.value` unchanged instead of the
+  relative `'Archive'`, and `src/types/electron.d.ts` widens `archiveRoot` to `string | null`;
+  no IPC channel or preload signature changed. `archive:changeDirectory` is untouched (same
+  move/point logic, same audit entry), and no file or folder was moved or deleted.
+  Why: register R17 / Q11 — four copies said `Documents\ADZU_Archive` and two said
+  `userData\Archive`, so with the setting missing or blank an import was written to one folder
+  while `backup:create` read the other and silently produced a database-only ZIP.
+  8 pure tests in `tests/electron/security/archiveRoot.test.ts` (configured value, trimming,
+  missing/empty/whitespace/non-string fallbacks, no working-directory result, verbatim default,
+  drive root and trailing separator preserved) and 20 source-level pins in
+  `tests/electron/security/archiveRootWiring.test.ts` (the default is defined once and exported;
+  no `ADZU_Archive` or duplicated userData default anywhere; `getArchiveRoot`/`ensureArchiveSetting`
+  shape and export; the insert sits inside the blank-row guard; each of the six consumers calls
+  the shared functions and no longer reads the row; `connection.cjs` requires `archivePaths`
+  lazily; both `runMigrations()` calls in `backup:restore` are followed by
+  `ensureArchiveSetting()`; `settings:set` refuses the key after the admin check and before the
+  write; the renderer passes the value through and the bridge type accepts null).
+  Manual check: with the setting deleted from a test database, import a document, open an old
+  document, run `backup:create` — all use `%APPDATA%\adzu-registrar-archive\Archive` and the ZIP
+  contains an `Archive` folder; `window.electronAPI.setSetting('archive_directory',
+  'C:\\temp', 1)` returns `success: false` with the Archive Location message.
+
+- **P1C cp4 (2026-10-27)** — end-to-end proof for Q11, renderer write audit, register entries.
+  `tests/electron/security/oneArchiveRoot.test.ts` (6 tests) runs the **real** `archivePaths.cjs`
+  and `backup.cjs` instead of pinning their source: `electron` is planted in the CJS `require.cache`
+  before the first require (so `paths.cjs` reads a temp `userData` and the machine's real
+  app-data folder is never touched), and `connection.setDb()` points `getDb()` at a small
+  in-memory handle that implements exactly the two statements the archive code prepares
+  (read the row, upsert the row). The handle stands in for better-sqlite3 only because this
+  tree's native build targets Electron's ABI and refuses to construct under Node; the SQL text
+  itself is pinned in `archiveRootWiring.test.ts`. The cases: no row (import writes the row,
+  `resolveArchivePath`/`toArchiveRelative` open and re-relativise under it,
+  `validateAndResolvePath` reports the same `resolvedRoot`, `resolveArchiveDir` returns it, and
+  none of it is the working directory or under `Documents`), a padded custom root (trimmed
+  everywhere, row left byte-for-byte alone, the default folder outside the root), a blank row
+  (repaired to the default in every consumer), and a restored database (its own folder kept;
+  a blank value repaired to *this* machine's default). Non-vacuity was proven by temporarily
+  making `resolveArchiveRoot` skip `.trim()` — the padded and blank cases fail — then restoring
+  the line; `git diff` is clean for `archiveRoot.cjs`.
+  Renderer audit (also cp4): the only writers of the `settings` table are `settings:set`,
+  `archive:changeDirectory` and `ensureArchiveSetting`; `setSetting` is exposed by the preload
+  bridge but has **zero** call sites in `src/`, and `Settings.tsx` changes the archive location
+  only through `changeArchiveDirectory` (Move/Point). No caller is refused by the new
+  `settings:set` guard, so nothing was changed to route around it. Three source pins in
+  `tests/electron/security/archiveRootWiring.test.ts` (20 → 23 tests) keep it that way: every
+  `archive_directory` in `src/` must be a `getSetting('archive_directory')` read (currently
+  `ImportScannerPage.tsx` and `Settings.tsx`), no `src/` file other than
+  `src/types/electron.d.ts` may call `setSetting`, and `changeArchiveDirectory` may appear only
+  in `Settings.tsx`. `docs/SECURITY_REGISTER.md` updated: R6 fixed (Q3), R17 fixed (Q11) with the
+  affected-install group and the Settings → Point recovery, §4 mitigation summary, §11 P1C
+  smoke test, §12 phase log for cp1–cp4.

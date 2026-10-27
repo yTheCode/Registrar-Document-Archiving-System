@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const { getDb } = require('../db/connection.cjs');
 const { getArchiveRoot } = require('./archivePaths.cjs');
+const { resolveArchiveRoot } = require('../security/archiveRoot.cjs');
 
 // Fixed archive layout (matches the office's physical structure):
 //   <ArchiveRoot>/<ProgramFolder>/<Letter>/<LASTNAME, Firstname M. (SY)>/
@@ -33,7 +34,7 @@ function buildStudentFolderName(student) {
 // document-type folder for a document, creating it, and returns
 // { ok: true, folderPath, studentDir? } or { ok: false, error }.
 function computeDocumentTypeFolder({ studentId, documentTypeName, archiveRoot }) {
-  const root = archiveRoot || getArchiveRoot();
+  const root = resolveArchiveRoot(archiveRoot, null) || getArchiveRoot();
   const sanitizedType = sanitizeFolderName(documentTypeName || 'Uncategorized') || 'Uncategorized';
 
   // General document (no student): <Root>/General Documents/<DocumentTypeName>/

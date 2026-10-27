@@ -1025,7 +1025,9 @@ function ImportScanner({ user }: PageProps) {
 
     try {
       const archiveResult = await window.electronAPI.getSetting('archive_directory')
-      const archiveDir = archiveResult.value || 'Archive'
+      // Q11: no fabricated fallback here. A missing or blank setting stays
+      // null, and the main process resolves the one archive root itself.
+      const archiveDir = archiveResult.value
 
       const batchDocuments = []
       const results: BatchResult[] = []

@@ -2,9 +2,8 @@
 // right after initializeDatabase).
 const path = require('path');
 const fs = require('fs');
-const { app } = require('electron');
 const { getDb } = require('../db/connection.cjs');
-const { resolveArchivePath, toArchiveRelative } = require('./archivePaths.cjs');
+const { resolveArchivePath, toArchiveRelative, getArchiveRoot } = require('./archivePaths.cjs');
 const { PROGRAM_FOLDERS, buildStudentFolderName, sanitizeFolderName } = require('./folderNaming.cjs');
 
 // Startup migration: every student document must live inside its
@@ -13,8 +12,7 @@ const { PROGRAM_FOLDERS, buildStudentFolderName, sanitizeFolderName } = require(
 // <StudentDir>/<DocumentType>/ here and update the database to match.
 function migrateDocumentTypeFolders() {
   try {
-    const archiveSetting = getDb().prepare('SELECT value FROM settings WHERE key = ?').get('archive_directory');
-    const archiveRoot = archiveSetting?.value || path.join(app.getPath('documents'), 'ADZU_Archive');
+    const archiveRoot = getArchiveRoot();
 
     const docs = getDb().prepare(`
       SELECT d.id, d.file_name, d.file_path, d.student_id,
