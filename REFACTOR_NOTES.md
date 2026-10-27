@@ -1316,3 +1316,203 @@ Follow-ups deliberately deferred until the defense pass is finished.
   claiming no session exists.
   Manual check: `npx vitest run tests/electron/security/ipcGuardWiring.test.ts` passes; add a
   throwaway `electron/ipc/zz.ipc.cjs` with one `ipcMain.handle` and watch it fail.
+- **P1B cp1 (2026-10-27)** — Added `docs/security/p1b-window-analysis.md`: the single
+  dev/production decision (`main.cjs:17`, `NODE_ENV === 'development' || !app.isPackaged`)
+  and the finding that a packaged build launched with `NODE_ENV=development` loads
+  `localhost:5173` and opens DevTools; both windows' `webPreferences` (main window leaves
+  `sandbox` unset, print window sets it and still carries `PRELOAD_PATH`); no application
+  menu is ever set, so the default Electron menu (Reload / Force Reload / Toggle DevTools)
+  ships; the only privileged web API in `src/` is `getUserMedia({ video })` — no audio,
+  notifications, clipboard or display capture; no `window.open`, no anchors, no
+  `will-navigate`/`setWindowOpenHandler`/`will-attach-webview` anywhere; the print page is
+  a generated temp HTML with one `<img>` and no `<script>`, so it calls no
+  `window.electronAPI` method; installer script is `npm run build:win`; `@electron/fuses`
+  is **not** installed. Why: CP2–CP6 need the current behaviour and the exact lines, and
+  CP6 must stop before installing anything. No application code changed.
+  Manual check: `git diff --stat` shows only `docs/security/` plus this line; open the file
+  and confirm §1 and §5 match `electron/main.cjs:17` and `electron/ipc/files.ipc.cjs:200-228`.
+- **P1B cp2 (2026-10-27)** — Q1: production now means packaged. New pure
+  `electron/security/runtimeMode.cjs` exports `resolveRuntimeMode({ isPackaged })` →
+  `{ isDev, devServerUrl, openDevTools }`, where `isDev` is true **only** for the literal
+  `false` (a missing, null or stringified flag fails closed to production). `main.cjs`
+  drops `NODE_ENV` and `usesDevServer` entirely and destructures the module's result, so the
+  same boolean now feeds `loadURL`, `openDevTools` and the Q6 `devServerOrigin` — previously
+  a packaged exe launched with `NODE_ENV=development` loaded `localhost:5173` and opened
+  DevTools (see `docs/security/p1b-window-analysis.md` §1).
+  `tests/electron/security/ipcGuardWiring.test.ts` pinned the old source strings
+  (`devServerOrigin: usesDevServer ? DEV_SERVER_URL : null`,
+  `mainWindow.loadURL(DEV_SERVER_URL)`); **its second test was updated in this commit** to
+  pin the new wiring plus two negative asserts (`NODE_ENV` and `usesDevServer` must not
+  reappear in `main.cjs`) — same intent (packaged origin null), stronger rule. 7 new tests
+  in `tests/electron/security/runtimeMode.test.ts`.
+  Manual check: `npm run dev` still loads localhost:5173 with DevTools; in a packaged build
+  started with `NODE_ENV=development`, the window shows the app from `dist/index.html` and no
+  DevTools (acceptance item 2).
+- **P1B cp3 (2026-10-27)** — Q2: a packaged build has no DevTools and no menu. New pure
+  `electron/security/blockedKeys.cjs` (`isBlockedShortcut(input)`) matches Electron's
+  `before-input-event` input for F12, F5 (which also catches Ctrl+F5), Ctrl+R,
+  Ctrl+Shift+R, Ctrl+Shift+I and Ctrl+Shift+J; it only fires on `keyDown`, reads the
+  shifted character Electron reports (`key: 'I'`), and requires `control === true` (the
+  Windows accelerators; `meta` is deliberately not treated as Ctrl).
+  `main.cjs` passes `devTools` (from `resolveRuntimeMode`) into the main window's
+  `webPreferences` and, **only when `!isDev`**, calls `Menu.setApplicationMenu(null)` and
+  installs the `before-input-event` filter — so dev keeps DevTools, reload and the default
+  menu. `electron/ipc/files.ipc.cjs` gives the hidden print window the same `devTools`
+  value, so both windows follow the one decision. Renamed the runtime-mode field
+  `openDevTools` → `devTools` so the same value is both the webPreferences flag and the
+  gate for `openDevTools()` (cp2's line above still shows the old name; nothing else uses
+  it). Why: register R11 — the default Electron menu ships Reload / Force Reload / Toggle
+  Developer Tools, and `autoHideMenuBar` only hides the bar.
+  9 new tests in `tests/electron/security/blockedKeys.test.ts` and 5 source-level wiring
+  tests in `tests/electron/security/devToolsWiring.test.ts` (the two files cannot be
+  required outside Electron, same approach as the P1A wiring tests).
+  Manual check: packaged app — F12 opens nothing, Ctrl+Shift+I opens nothing, no menu bar
+  (and Alt shows none), the app still loads and navigates; `npm run dev` still opens
+  DevTools and F5 still reloads.
+- **P1B cp4 (2026-10-27)** — Q4: the hidden print window no longer gets the app preload.
+  `electron/ipc/files.ipc.cjs` drops `preload: PRELOAD_PATH` from that `BrowserWindow` and
+  drops `PRELOAD_PATH` from its `paths.cjs` import (no other use in the file); `sandbox:
+  true`, `nodeIntegration: false`, `contextIsolation: true` and the Q2 `devTools` value
+  stay. Safe because the page is a generated `%TEMP%` HTML with a single `<img>` and no
+  `<script>`, and printing is driven by `webContents.print` from the main process — nothing
+  in that page ever called the bridge (`docs/security/p1b-window-analysis.md` §5), so no
+  data has to move into the URL. Why: register R12 — a temp `file://` page carried all 47
+  IPC methods.
+  4 source-level tests in `tests/electron/security/printWindowWiring.test.ts` (the module
+  cannot be required outside Electron and the window is a live BrowserWindow, so the wiring
+  is pinned by reading the source, as the P1A wiring tests do). **cp3's pin was updated in
+  this commit**: `devToolsWiring.test.ts` looked for the literal `devTools,`, and removing
+  the `preload` line made `devTools` the last property (no trailing comma), so it now slices
+  the whole options object and matches `/\bdevTools\b/`. `PRELOAD_PATH` is now
+  exported by `electron/paths.cjs` with no consumer — left in place (README documents it),
+  a cleanup candidate.
+  Manual check: print an image document (default printer dialog appears and the page is
+  fit-to-page), and print a PDF (opens in its default app) — both unchanged.
+- **P1B cp5 (2026-10-27)** — Q7: the main window may not open pop-ups, navigate away, attach
+  webviews, or hold any permission except the camera. New pure
+  `electron/security/navGuard.cjs`: `DENY_WINDOW_OPEN` (frozen `{ action: 'deny' }` —
+  nothing in the app ever opened a window or an external link, so there is nothing to
+  preserve), `decideNavigation({ url, isAllowedUrl })` which **injects the Q6 URL policy**
+  so "the app's own page" has one definition (packaged `dist/index.html` plus the flat route
+  URLs; dev also allows the Vite origin), and `decidePermission({ permission, details })`
+  which grants only `permission === 'media'` with `mediaTypes` exactly `['video']` (request
+  handler shape) or `mediaType === 'video'` (check handler shape). `main.cjs` installs
+  `setWindowOpenHandler`, `will-navigate`, `will-attach-webview` on the main window's
+  webContents and both permission handlers on its session, each gated on
+  `webContents === mainWindow.webContents`, in dev **and** packaged (a dev build is not a
+  reason to allow navigation away).
+  Trade-off recorded: Chromium's label/enumeration probe (`mediaType: 'unknown'`) is denied,
+  so device names may fall back to the UI's existing `Camera N` label; the picker degrades,
+  the camera does not.
+  20 tests in `tests/electron/security/navGuard.test.ts` (including a case that runs the
+  decisions through the real `createUrlPolicy` for packaged and dev) plus 5 source-level
+  wiring tests in `tests/electron/security/navGuardWiring.test.ts`.
+  Manual check: packaged app — a link or `window.open` to an outside site does nothing, and
+  scanning still finds and previews the camera; dev — same, plus DevTools still opens.
+- **P1B cp5b (2026-10-27)** — Supersedes cp5's trade-off above: the permission **check**
+  handler now allows `permission: 'media'` with `mediaType: 'unknown'` as well as `'video'`.
+  New `decidePermissionCheck` in `electron/security/navGuard.cjs` delegates to
+  `decidePermission` first and only then adds the single string case, so the **request**
+  handler is untouched (still video-only) and audio stays denied in both shapes; an array
+  shape never reaches the allowance. Why: Chromium probes the check handler with 'unknown'
+  when it only needs device labels, and denying it hid camera names — the probe opens no
+  stream, so this is not a weaker camera rule. `main.cjs`'s check handler now calls
+  `decidePermissionCheck`; 5 new tests in `navGuard.test.ts` (including that audio and the
+  other 13 permissions are still denied and that requests still reject 'unknown') and
+  `navGuardWiring.test.ts` was updated to pin one call site per decision.
+  Manual check: camera dropdown shows real device names; microphone-only requests and
+  notifications still fail.
+- **P1B cp6 (2026-10-27)** — Q13: the built Windows exe is shipped with three Electron fuses
+  off. New `scripts/afterPack.cjs` (CommonJS because `package.json` is `"type": "module"`) is
+  electron-builder's `afterPack` hook (`"afterPack": "scripts/afterPack.cjs"` in the `build`
+  block). It resolves `appOutDir/<productFilename>.exe` only when
+  `electronPlatformName === 'win32'` (macOS/Linux keep Electron's defaults), throws if the exe
+  is missing rather than reporting success, and calls `flipFuses` with exactly
+  `{ version: FuseV1, RunAsNode: false, EnableNodeOptionsEnvironmentVariable: false,
+  EnableNodeCliInspectArguments: false }`. The first stops `ELECTRON_RUN_AS_NODE=1` from
+  turning the app into a Node shell; the other two stop `NODE_OPTIONS` and `--inspect` from
+  injecting code into the main process. `EnableCookieEncryption`,
+  `EnableEmbeddedAsarIntegrityValidation`, `OnlyLoadAppFromAsar`,
+  `LoadBrowserProcessSpecificV8Snapshot` and `GrantFileProtocolExtraPrivileges` are left alone:
+  each needs companion changes (key handling, asar-only layout, V8 snapshot) we have not made,
+  and a half-enabled fuse breaks the build.
+  Dependency: `npm install -D -E @electron/fuses@1.8.0` (the CommonJS release; 2.x is ESM-only).
+  The lockfile gained only that package and its nested `fs-extra@9.1.0`; no other package
+  changed version, and the existing `better-sqlite3` binding was untouched.
+  9 tests in `tests/scripts/afterPack.test.ts`: the win32 exe path, the non-win32 skip, the exact
+  fuse option set (and that the others are absent), `applyFuses` calling `flip(exePath, options)`
+  with injected `exists`/`flip`, a missing exe rejecting without calling `flip`, and the
+  `package.json` wiring.
+  Manual check: on the installed app, `set ELECTRON_RUN_AS_NODE=1` then run the exe — the app
+  window opens normally (no Node REPL); the app still logs in, scans and prints.
+- **P1B cp5d (2026-10-27)** — Camera permission diagnosis, covering cp5b and cp5c; supersedes
+  the cp5 trade-off and cp5b's `'unknown'`-only allowance recorded above.
+  **What the regression was:** after Q7 installed permission handlers, the camera dropdown
+  listed only "Default camera"/"Camera 1", and `enumerateDevices()` returned a single
+  `videoinput` with an empty label and empty `deviceId`, while `getUserMedia({ video })` still
+  produced a working feed. Cause: Q7's check handler denied the microphone check, and Chromium
+  hides **every** device name until the microphone name check passes — so denying audio also
+  emptied the camera list. cp5b allowed only `mediaType: 'unknown'`, which was not the shape
+  that mattered.
+  **How it was diagnosed:** temporary `console.log` lines in both permission handlers in
+  `main.cjs` printed the permission name, `JSON.stringify(details)`, the argument types, whether
+  `webContents` was the main window / null / other, and the decision (plus a `console-message`
+  mirror of `ENUM_*` probe lines typed in DevTools, to order the logs against an
+  `enumerateDevices()` call). They showed media checks in two denied shapes: `mediaType:
+  'audio'`, and no `mediaType` key at all (`{ embeddingOrigin, isMainFrame, requestingUrl }`).
+  A temporary experiment that returned true for every media check made Camo Studio, Iriun
+  Webcam and OBS Virtual Camera appear again. All logging and the experiment were removed with
+  `git restore electron/main.cjs`.
+  **Final rule:** `decidePermissionCheck` in `electron/security/navGuard.cjs` grants any
+  `media` check from the main window, whatever the `mediaType` (missing, `unknown`, `video`,
+  `audio`); every other permission is denied. The request handler is unchanged: `mediaTypes`
+  must be exactly `['video']`, so no microphone stream can be opened. A check grants no stream;
+  microphone and speaker *names* become visible to the app's own page.
+  Tests updated in `navGuard.test.ts` (audio and no-`mediaType` checks allowed; audio and
+  `['video','audio']` requests still denied; non-media permissions denied) and the pin comment
+  in `navGuardWiring.test.ts`; register R22 records the rationale.
+  Manual check: the camera dropdown lists real device names, and `getUserMedia({ audio: true })`
+  still fails.
+- **P1B cp7 (2026-10-27)** — Q6 follow-up: the packaged app logged in but the content area stayed
+  blank on every page. Cause: BrowserRouter writes history-API paths onto a `file://` document,
+  so `/students` becomes `file:///D:/students`, a file that does not exist; the same wrong
+  `document.baseURI` also breaks the relative `scanner/opencv.js` and `scanner/jscanify.js`
+  loads. `src/App.tsx` now mounts `HashRouter` and every route path and the admin-only route
+  block are unchanged; `useLocation().pathname` still returns `/students`, so `Layout`'s active
+  link logic did not need a change. Why this is safe for Q6/Q7: the document URL stays
+  `dist/index.html`, the route lives in the fragment, and `will-navigate` is not emitted for a
+  fragment-only change (Electron reports those as `did-navigate-in-page`, which the main
+  process does not listen for). No URL-policy rule was loosened. Tests: `urlPolicy.test.ts` now
+  covers every hash route on the packaged index plus other files, paths, drives and hosts
+  denied behind a hash; `senderGuard.test.ts` runs the real policy against a hashed main frame;
+  `navGuard.test.ts` covers the hashed index at the navigation gate; new
+  `hashRouterWiring.test.ts` pins HashRouter, the unchanged route paths and that `main.tsx`
+  mounts no router; `navGuardWiring.test.ts` pins that the gate stays on `will-navigate` only.
+  Register R20 marked resolved, with notes that the flat BrowserRouter-style route allowance is
+  now unused (removable later) and that an `app://` protocol with BrowserRouter is a possible
+  future improvement.
+  Manual check: in the packaged build, log in and visit Dashboard, Students, Search, Help and
+  (as admin) Import, Settings and Logs — each fills the content area, and scanning still loads
+  OpenCV.
+- **P1B cp7b (2026-10-27)** — Window icon and in-app logo. The title-bar icon looked cropped
+  because `build.win.icon` pointed at `src/assets/adzu-seal.png`, a 768×764 non-square PNG, and
+  the BrowserWindow `icon` pointed into `src/assets`, which is not in `build.files` once
+  packaged, so Windows fell back to the same cropped exe icon. `build/icon.ico` (verified 16,
+  24, 32, 48, 64, 128 and 256; every entry 32bpp) is now the exe icon via `build.win.icon`.
+  `build/` is electron-builder's resources folder, used at build time and not packed, so
+  `build/icon.png` reaches the installed app through
+  `extraResources: [{ from: "build/icon.png", to: "icon.png" }]` (asar stays on for the app).
+  `main.cjs` reads `process.resourcesPath/icon.png` when packaged and `../build/icon.png` in
+  dev, so the BrowserWindow icon resolves in both. On screen the AdZU seal is replaced by
+  `src/assets/logo-256.png` in the sidebar (`h-16 w-16`) and both login placements (`h-9 w-9`
+  and `172×172`) with alt text "AdZU Registrar Archive logo"; sizes, classes and containers are
+  unchanged, and the round logo needs no new radius or background. `src/assets/adzu-seal.png`
+  stays in the tree, unreferenced; no print header, document template or export used it (the
+  print page carries only the document image), so nothing printed changed.
+  4 tests in `windowIconWiring.test.ts`: the `package.json` icon and `extraResources` paths, the
+  packaged/dev resolution (and that `main.cjs` no longer names the seal), the ICO directory
+  sizes, and the three logo placements with their unchanged classes.
+  Manual check: the dev window shows the round logo uncropped in the title bar; the installed
+  build shows the same icon with no seal fallback; sidebar and login show the new logo at the
+  old sizes.
+

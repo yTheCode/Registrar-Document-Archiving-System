@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog } = require('electron');
+const { app, BrowserWindow, dialog, Menu } = require('electron');
 const path = require('path');
 const { pathToFileURL } = require('url');
 
@@ -11,16 +11,27 @@ const { migrateDocumentTypeFolders, migrateToRelativePaths } = require('./servic
 const { registerAllIpc } = require('./ipc/index.cjs');
 const { session } = require('./security/session.cjs');
 const { createSenderGuard, createUrlPolicy } = require('./security/senderGuard.cjs');
+const { resolveRuntimeMode } = require('./security/runtimeMode.cjs');
+const { isBlockedShortcut } = require('./security/blockedKeys.cjs');
+const { DENY_WINDOW_OPEN, decideNavigation, decidePermission, decidePermissionCheck } = require('./security/navGuard.cjs');
 
-const DEV_SERVER_URL = 'http://localhost:5173';
 const INDEX_HTML_PATH = path.join(__dirname, '../dist/index.html');
-const usesDevServer = process.env.NODE_ENV === 'development' || !app.isPackaged;
+
+// Q1: production means packaged. This is the only dev/production decision in the
+// process, and it reads nothing from the environment.
+const { isDev, devServerUrl, devTools } = resolveRuntimeMode({ isPackaged: app.isPackaged });
+
+// build/ is not inside the asar: electron-builder copies build/icon.png to
+// resources/icon.png (extraResources) and points the exe at build/icon.ico.
+const WINDOW_ICON_PATH = isDev
+  ? path.join(__dirname, '../build/icon.png')
+  : path.join(process.resourcesPath, 'icon.png');
 
 // Q6: the only pages allowed to call IPC are the ones this process loads into
 // the main window.
 const isAllowedUrl = createUrlPolicy({
   indexFileUrl: pathToFileURL(INDEX_HTML_PATH).href,
-  devServerOrigin: usesDevServer ? DEV_SERVER_URL : null
+  devServerOrigin: devServerUrl
 });
 
 const validateSender = createSenderGuard({
@@ -40,25 +51,55 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      devTools,
       preload: path.join(__dirname, 'preload.js')
     },
     autoHideMenuBar: true,
-    icon: path.join(__dirname, '../src/assets/adzu-seal.png')
+    icon: WINDOW_ICON_PATH
   });
   setMainWindow(mainWindow);
+
+  // Q2: a packaged build has no DevTools and no menu, and the shortcuts that
+  // would open or reload them are swallowed before the renderer sees them.
+  if (!isDev) {
+    Menu.setApplicationMenu(null);
+    mainWindow.webContents.on('before-input-event', (event, input) => {
+      if (isBlockedShortcut(input)) event.preventDefault();
+    });
+  }
+
+  // Q7: this window only ever shows the app's own page. No pop-ups, no
+  // navigation away from the page the process loaded, no webviews, and the only
+  // permission it may hold is the camera.
+  mainWindow.webContents.setWindowOpenHandler(() => DENY_WINDOW_OPEN);
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (!decideNavigation({ url, isAllowedUrl })) event.preventDefault();
+  });
+  mainWindow.webContents.on('will-attach-webview', event => event.preventDefault());
+
+  const mainSession = mainWindow.webContents.session;
+  mainSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    callback(webContents === mainWindow.webContents && decidePermission({ permission, details }));
+  });
+  mainSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
+    return webContents === mainWindow.webContents && decidePermissionCheck({ permission, details });
+  });
 
   // The app is single-window: once this window goes away nobody is logged in.
   mainWindow.on('closed', () => {
     session.clear();
   });
 
-  // Load app
-  if (usesDevServer) {
-    mainWindow.loadURL(DEV_SERVER_URL);
-    mainWindow.webContents.openDevTools();
+  // Load app. Only an unpackaged build can reach the dev server; an installed
+  // copy always loads the packaged dist/index.html.
+  if (isDev) {
+    mainWindow.loadURL(devServerUrl);
   } else {
     mainWindow.loadFile(INDEX_HTML_PATH);
   }
+
+  // DevTools follow the same decision.
+  if (devTools) mainWindow.webContents.openDevTools();
 }
 
 app.whenReady().then(() => {

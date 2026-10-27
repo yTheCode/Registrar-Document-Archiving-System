@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { UserRound, LockKeyhole, Eye, EyeOff } from 'lucide-react'
 import { cn } from '@/utils/cn'
-import adzuSeal from '@/assets/adzu-seal.png'
+import appLogo from '@/assets/logo-256.png'
 import { useToast } from '@/components/ui/Toast'
 import type { User } from '@/types'
 
@@ -13,8 +13,8 @@ function Logo({ inverse = false }: { inverse?: boolean }) {
   return (
     <div className="flex items-center gap-2.5">
       <img 
-        src={adzuSeal}
-        alt="Ateneo de Zamboanga University seal"
+        src={appLogo}
+        alt="AdZU Registrar Archive logo"
         className="h-9 w-9 object-contain" 
       />
       <div className="leading-tight">
@@ -123,8 +123,8 @@ function Login({ onLogin }: LoginProps) {
         
         <div className="relative z-10 flex max-w-[600px] flex-col items-center text-center">
           <img 
-            src={adzuSeal}
-            alt="ADZU seal"
+            src={appLogo}
+            alt="AdZU Registrar Archive logo"
             className="mb-8 h-[172px] w-[172px] object-contain drop-shadow-xl" 
           />
           <h1 className="max-w-[560px] text-[31px] font-bold leading-[1.13] tracking-[-.04em] text-white">

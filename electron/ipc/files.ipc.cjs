@@ -2,11 +2,15 @@
 const { app, BrowserWindow, dialog, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { dbDir, dbPath, ELECTRON_DIR, PRELOAD_PATH } = require('../paths.cjs');
+const { dbDir, dbPath, ELECTRON_DIR } = require('../paths.cjs');
 const { getDb } = require('../db/connection.cjs');
 const { isAdmin } = require('../services/authz.cjs');
 const { validateAndResolvePath, resolveArchivePath } = require('../services/archivePaths.cjs');
 const { sessionPickedFiles } = require('../services/pickedFiles.cjs');
+const { resolveRuntimeMode } = require('../security/runtimeMode.cjs');
+
+// Q2: DevTools exist only in a dev build, on every window this process creates.
+const { devTools } = resolveRuntimeMode({ isPackaged: app.isPackaged });
 
 
 // File operations
@@ -215,6 +219,9 @@ ipcMain.handle('file:print', async (event, { filePath, userId }) => {
 </html>`;
     fs.writeFileSync(htmlPath, html);
 
+    // Q4: no preload, so this temp page has no bridge to the main process. It
+    // needs none — the image arrives as a file:// URL in the HTML and printing
+    // is driven from the main process.
     const printWindow = new BrowserWindow({
       show: false,
       width: 850,
@@ -223,7 +230,7 @@ ipcMain.handle('file:print', async (event, { filePath, userId }) => {
         sandbox: true,
         nodeIntegration: false,
         contextIsolation: true,
-        preload: PRELOAD_PATH
+        devTools
       }
     });
 

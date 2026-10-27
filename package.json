@@ -35,12 +35,19 @@
   "build": {
     "appId": "com.adzu.registrar.archive",
     "productName": "AdZU Registrar Archive",
+    "afterPack": "scripts/afterPack.cjs",
     "win": {
       "target": [
         "nsis"
       ],
-      "icon": "src/assets/adzu-seal.png"
+      "icon": "build/icon.ico"
     },
+    "extraResources": [
+      {
+        "from": "build/icon.png",
+        "to": "icon.png"
+      }
+    ],
     "files": [
       "dist/**/*",
       "electron/**/*",
@@ -69,6 +76,7 @@
     "tailwind-merge": "^2.5.4"
   },
   "devDependencies": {
+    "@electron/fuses": "1.8.0",
     "@electron/rebuild": "^3.7.2",
     "@eslint/js": "^9.39.5",
     "@tailwindcss/vite": "^4.0.0-beta.1",
