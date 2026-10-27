@@ -99,9 +99,25 @@ describe('formatTimestamp', () => {
     expect(formatTimestamp('2026-03-05T16:30:00Z')).toBe('Mar 6, 12:30 AM')
   })
 
-  it('throws on an unparseable timestamp (Intl rejects an Invalid Date)', () => {
+  it('returns the placeholder instead of throwing on an unparseable timestamp', () => {
+    // Updated in p1d cp1b: this test used to pin the throwing behaviour (Q12).
     freezeNow()
-    expect(() => formatTimestamp('')).toThrow(RangeError)
-    expect(() => formatTimestamp('garbage')).toThrow(RangeError)
+    expect(formatTimestamp('garbage')).toBe('Unknown time')
+    expect(formatTimestamp('2026-13-45T10:00:00Z')).toBe('Unknown time')
+  })
+
+  it('returns the placeholder for null, undefined, empty and blank input', () => {
+    freezeNow()
+    expect(formatTimestamp(null)).toBe('Unknown time')
+    expect(formatTimestamp(undefined)).toBe('Unknown time')
+    expect(formatTimestamp('')).toBe('Unknown time')
+    expect(formatTimestamp('   ')).toBe('Unknown time')
+  })
+
+  it('accepts a timestamp that carries a time part', () => {
+    freezeNow()
+    expect(formatTimestamp('2026-03-05T02:30:00Z')).toBe('Today at 10:30 AM')
+    expect(formatTimestamp('2026-03-05T02:30:00.250Z')).toBe('Today at 10:30 AM')
+    expect(formatTimestamp('2026-03-04T21:45:00+08:00')).toBe('Yesterday at 09:45 PM')
   })
 })

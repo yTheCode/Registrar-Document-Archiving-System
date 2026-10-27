@@ -1649,9 +1649,24 @@ Follow-ups deliberately deferred until the defense pass is finished.
   the only date formatting in the renderer). `tests/utils/format.test.ts`: **the existing "throws
   on an unparseable value" test pinned the old behaviour and was replaced in this commit** by a
   placeholder assertion, plus new cases for `null`, `undefined`, `''`, `'   '`, `'2026-13-45'`
-  and a date-only string. `formatTimestamp` (same file) is **not** changed — it is a separate
-  helper outside Q12 and still throws on an invalid value; recorded as a follow-up candidate.
+  and a date-only string. `formatTimestamp` (same file) was left alone in cp1 as outside Q12;
+  cp1b (below) adds it at the owner's request.
   Manual check: in a test database set one document's `created_at` to `garbage`
   (`UPDATE documents SET created_at='garbage' WHERE id=…`), then open Students, Search and
   Dashboard — the row shows `Unknown date` and the list still renders.
+- **P1D cp1b (2026-10-27)** — P1 Q12, extended by the owner: `formatTimestamp` in
+  `src/utils/format.ts` now returns the placeholder **`Unknown time`** (chosen over
+  `Unknown date` because every other branch of this helper is a clock reading — `Today at …`,
+  `Yesterday at …`) for `null`, `undefined`, empty, whitespace-only and unparseable input, and its
+  parameter widened to `string | null | undefined` (no caller changed). Why: `ActivityLog.tsx`
+  renders one `formatTimestamp(log.created_at)` per row, so a single bad value blanked the Logs
+  page the same way. **The existing "throws on an unparseable timestamp" test pinned the old
+  behaviour and was replaced in this commit**, plus new cases for `null`, `undefined`, `''`,
+  `'   '`, an out-of-range date and timestamps carrying a time part (seconds, milliseconds and a
+  `+08:00` offset). Audit of the renderer for the same pattern: only `src/utils/format.ts` formats
+  dates; `src/components/ui/Pagination.tsx` calls `toLocaleString()` on a number, which cannot
+  throw. No other helper needed changing.
+  Manual check: in a test DB set one `activity_logs` row's `created_at` to `garbage`
+  (`UPDATE activity_logs SET created_at='garbage' WHERE id=…`), open Logs — the row shows
+  `Unknown time` and the table still renders.
 
