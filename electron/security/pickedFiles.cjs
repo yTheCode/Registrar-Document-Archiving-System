@@ -4,18 +4,22 @@ const nodePath = require('path');
 
 // Membership is path identity, not string identity: resolve to an absolute
 // path, normalise separators, and fold case on Windows only (where the
-// filesystem is case-insensitive). Returns null for anything that cannot be a
-// path — null, non-strings, empty or whitespace-only, embedded NUL — so a
+// filesystem is case-insensitive). Only an absolute path (drive-letter or UNC)
+// is considered, so the answer never depends on the process working
+// directory. Returns null for anything that cannot be a path — null,
+// non-strings, empty or whitespace-only, embedded NUL, relative — so a
 // malformed argument never matches a picked file.
-function normalizePickedPath(value, { platform = process.platform, cwd = process.cwd() } = {}) {
+function normalizePickedPath(value, { platform = process.platform } = {}) {
   if (typeof value !== 'string' || value.includes('\0')) return null;
   const trimmed = value.trim();
   if (!trimmed) return null;
 
   const pathApi = platform === 'win32' ? nodePath.win32 : nodePath.posix;
+  if (!pathApi.isAbsolute(trimmed)) return null;
+
   let resolved;
   try {
-    resolved = pathApi.resolve(cwd, trimmed);
+    resolved = pathApi.resolve(trimmed);
   } catch {
     return null;
   }

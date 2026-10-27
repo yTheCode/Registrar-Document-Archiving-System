@@ -1545,14 +1545,21 @@ Follow-ups deliberately deferred until the defense pass is finished.
   `path.resolve(picked)` — **no change was required there**, because normalisation happens
   inside the matcher on the set's entries too, so a mixed-slash or differently-cased set member
   still matches and a differently-cased renderer string still matches. Fail-closed corners
-  pinned by tests: `\?\C:\…` long-path spelling of a picked file is rejected, and a relative
-  path is accepted only when it resolves to the picked file. `file:readPickedAsBase64` keeps its
+  pinned by tests: a long-path-prefixed (`\\?\`) spelling of a picked file is rejected, and a
+  relative path is now rejected outright (see cp2b below). `file:readPickedAsBase64` keeps its
   exact-string check (unchanged, and stricter, so this commit does not loosen it).
-  23 tests in `tests/electron/security/pickedFiles.test.ts`: normalisation (absolute, lower-case,
-  slash/segment collapsing, trimming, null/blank/non-string/NUL, posix case preserved) and
-  membership (exact, different file, different casing both directions, mixed slashes, relative
-  identity vs traversal, system path, database path, UNC rejected unless picked, long-path
-  prefix, empty set/null set/junk entries, posix case sensitivity), plus 5 source-level pins on
+  **cp2b (same checkpoint, follow-up commit):** `normalizePickedPath` now requires
+  `path.win32.isAbsolute` on the raw value before resolving, so every relative source is refused
+  even when it would have resolved to a picked file. Reason: the result must not depend on the
+  process working directory, which is never the user's folder. Drive-letter absolute paths and
+  UNC paths that are in the picked set still work, and the long-path `\\?\` form is still a
+  distinct (rejected) string. The relative-path test now expects rejection on both platforms,
+  and a new test pins `file.pdf`, `.\Docs\file.pdf` and the drive-relative `C:file.pdf` as null.
+  24 tests in `tests/electron/security/pickedFiles.test.ts`: normalisation (absolute, lower-case,
+  slash/segment collapsing, trimming, null/blank/non-string/NUL, relative null, posix case
+  preserved) and membership (exact, different file, different casing both directions, mixed
+  slashes, relative rejected, traversal, system path, database path, UNC rejected unless picked,
+  long-path prefix, empty set/null set/junk entries, posix case sensitivity), plus 5 source-level pins on
   `files.ipc.cjs` (import, unchanged channel signature, the check runs before
   `validateAndResolvePath`/`copyFileSync`, the failure shape, and the old destination checks).
   Why: register R6 — `file:copy` validated only the destination, so the renderer could copy the

@@ -6,11 +6,11 @@ import { describe, expect, it } from 'vitest'
 // Pure module: no electron, no paths.cjs, so it loads in plain Node.
 const require = createRequire(import.meta.url)
 const { normalizePickedPath, isPickedPath } = require('../../../electron/security/pickedFiles.cjs') as {
-  normalizePickedPath: (value: unknown, options?: { platform?: string; cwd?: string }) => string | null
-  isPickedPath: (sourcePath: unknown, pickedPaths: Iterable<unknown> | null, options?: { platform?: string; cwd?: string }) => boolean
+  normalizePickedPath: (value: unknown, options?: { platform?: string }) => string | null
+  isPickedPath: (sourcePath: unknown, pickedPaths: Iterable<unknown> | null, options?: { platform?: string }) => boolean
 }
 
-const WIN = { platform: 'win32', cwd: 'C:\\work' }
+const WIN = { platform: 'win32' }
 const PICKED = 'C:\\Users\\Ana\\Docs\\file.pdf'
 
 const read = (relative: string) => readFileSync(fileURLToPath(new URL(relative, import.meta.url)), 'utf8')
@@ -40,6 +40,12 @@ describe('normalizePickedPath (win32)', () => {
     expect(normalizePickedPath('C:\\a\0b.txt', WIN)).toBeNull()
   })
 
+  it('returns null for relative paths instead of resolving them', () => {
+    expect(normalizePickedPath('file.pdf', WIN)).toBeNull()
+    expect(normalizePickedPath('.\\Docs\\file.pdf', WIN)).toBeNull()
+    expect(normalizePickedPath('C:file.pdf', WIN)).toBeNull()
+  })
+
   it('does not fold case on a case-sensitive platform', () => {
     expect(normalizePickedPath('/home/Ana/File.pdf', { platform: 'linux' })).toBe('/home/Ana/File.pdf')
   })
@@ -60,9 +66,13 @@ describe('isPickedPath (win32)', () => {
     expect(isPickedPath(PICKED, new Set(['C:/Users\\Ana/Docs/file.pdf']), WIN)).toBe(true)
   })
 
-  it('accepts a relative form only when it resolves to the picked file', () => {
-    expect(isPickedPath('file.pdf', new Set([PICKED]), { platform: 'win32', cwd: 'C:\\Users\\Ana\\Docs' })).toBe(true)
-    expect(isPickedPath('..\\Other\\file.pdf', new Set([PICKED]), { platform: 'win32', cwd: 'C:\\Users\\Ana\\Docs' })).toBe(false)
+  it('rejects any relative source, even one that would resolve to the picked file', () => {
+    // The answer must not depend on the process working directory.
+    const picked = new Set([PICKED])
+    expect(isPickedPath('file.pdf', picked, WIN)).toBe(false)
+    expect(isPickedPath('.\\file.pdf', picked, WIN)).toBe(false)
+    expect(isPickedPath('..\\Other\\file.pdf', picked, WIN)).toBe(false)
+    expect(isPickedPath('Docs\\file.pdf', picked, WIN)).toBe(false)
   })
 
   it('rejects a different file', () => {
@@ -111,9 +121,10 @@ describe('isPickedPath (win32)', () => {
   })
 
   it('keeps case-sensitive membership on a case-sensitive platform', () => {
-    const posix = { platform: 'linux', cwd: '/work' }
+    const posix = { platform: 'linux' }
     expect(isPickedPath('/home/ana/File.pdf', new Set(['/home/ana/File.pdf']), posix)).toBe(true)
     expect(isPickedPath('/home/ana/file.pdf', new Set(['/home/ana/File.pdf']), posix)).toBe(false)
+    expect(isPickedPath('home/ana/File.pdf', new Set(['/home/ana/File.pdf']), posix)).toBe(false)
   })
 })
 
