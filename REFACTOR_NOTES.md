@@ -1669,4 +1669,20 @@ Follow-ups deliberately deferred until the defense pass is finished.
   Manual check: in a test DB set one `activity_logs` row's `created_at` to `garbage`
   (`UPDATE activity_logs SET created_at='garbage' WHERE id=…`), open Logs — the row shows
   `Unknown time` and the table still renders.
+- **P1D cp2 (2026-10-27)** — P1 Q10, analysis only: added `docs/security/p1d-doc-corrections.md`,
+  which checks README, HANDOFF, the smoke checklist and the register against the current code and
+  lists every mismatch with `file:line`, the code evidence and a proposed replacement. Re-counted
+  from the tree: **47 IPC channels = 47 preload methods = 47 handlers** (S0's 46 + `auth:logout`
+  from Q5), 28 test files / 304 tests, 0 lint errors / 112 warnings. Confirmed by reading the code:
+  no `journal_mode` pragma is ever executed (so the README's WAL claim is false — SQLite's default
+  `delete` journal is in use), there is no password-change channel or UI (so "Password change:
+  implemented" is false), no Repository-pattern class exists anywhere, and the renderer does call
+  `logs:add` from five sites (contradicting the README's audit-log note). Phase A–C leftover
+  claims are listed too: HashRouter, the `build/icon.ico` + `extraResources` packaging, the
+  `electron/security/` modules, the session-aware `isAdmin`, and HANDOFF's "no security fix has
+  been made". Report-only rows: README:754-761 (default credentials, Q8 — not edited).
+  No application file and no README wording changed in this commit; the approved wording lands in
+  a separate `p1d cp2b` commit.
+  Manual check: open `docs/security/p1d-doc-corrections.md` and spot-check §2 against
+  `electron/preload.js` (47 keys) and `package.json` (build block).
 
