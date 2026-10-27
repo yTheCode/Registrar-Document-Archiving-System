@@ -1610,3 +1610,33 @@ Follow-ups deliberately deferred until the defense pass is finished.
   document, run `backup:create` — all use `%APPDATA%\adzu-registrar-archive\Archive` and the ZIP
   contains an `Archive` folder; `window.electronAPI.setSetting('archive_directory',
   'C:\\temp', 1)` returns `success: false` with the Archive Location message.
+
+- **P1C cp4 (2026-10-27)** — end-to-end proof for Q11, renderer write audit, register entries.
+  `tests/electron/security/oneArchiveRoot.test.ts` (6 tests) runs the **real** `archivePaths.cjs`
+  and `backup.cjs` instead of pinning their source: `electron` is planted in the CJS `require.cache`
+  before the first require (so `paths.cjs` reads a temp `userData` and the machine's real
+  app-data folder is never touched), and `connection.setDb()` points `getDb()` at a small
+  in-memory handle that implements exactly the two statements the archive code prepares
+  (read the row, upsert the row). The handle stands in for better-sqlite3 only because this
+  tree's native build targets Electron's ABI and refuses to construct under Node; the SQL text
+  itself is pinned in `archiveRootWiring.test.ts`. The cases: no row (import writes the row,
+  `resolveArchivePath`/`toArchiveRelative` open and re-relativise under it,
+  `validateAndResolvePath` reports the same `resolvedRoot`, `resolveArchiveDir` returns it, and
+  none of it is the working directory or under `Documents`), a padded custom root (trimmed
+  everywhere, row left byte-for-byte alone, the default folder outside the root), a blank row
+  (repaired to the default in every consumer), and a restored database (its own folder kept;
+  a blank value repaired to *this* machine's default). Non-vacuity was proven by temporarily
+  making `resolveArchiveRoot` skip `.trim()` — the padded and blank cases fail — then restoring
+  the line; `git diff` is clean for `archiveRoot.cjs`.
+  Renderer audit (also cp4): the only writers of the `settings` table are `settings:set`,
+  `archive:changeDirectory` and `ensureArchiveSetting`; `setSetting` is exposed by the preload
+  bridge but has **zero** call sites in `src/`, and `Settings.tsx` changes the archive location
+  only through `changeArchiveDirectory` (Move/Point). No caller is refused by the new
+  `settings:set` guard, so nothing was changed to route around it. Three source pins in
+  `tests/electron/security/archiveRootWiring.test.ts` (20 → 23 tests) keep it that way: every
+  `archive_directory` in `src/` must be a `getSetting('archive_directory')` read (currently
+  `ImportScannerPage.tsx` and `Settings.tsx`), no `src/` file other than
+  `src/types/electron.d.ts` may call `setSetting`, and `changeArchiveDirectory` may appear only
+  in `Settings.tsx`. `docs/SECURITY_REGISTER.md` updated: R6 fixed (Q3), R17 fixed (Q11) with the
+  affected-install group and the Settings → Point recovery, §4 mitigation summary, §11 P1C
+  smoke test, §12 phase log for cp1–cp4.

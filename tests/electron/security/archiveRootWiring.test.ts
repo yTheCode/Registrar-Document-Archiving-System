@@ -165,3 +165,47 @@ describe('renderer no longer invents a root', () => {
     expect(bridgeTypes).toMatch(/archiveRoot: string \| null/)
   })
 })
+
+// settings:set now refuses archive_directory (the files and the row would
+// disagree), so no renderer file may use that route, and nothing may call
+// setSetting at all. Settings.tsx changes the root only through
+// archive:changeDirectory, which validates the target and moves or re-points
+// the files.
+const rendererFiles = () =>
+  readdirSync(url('../../../src'), { recursive: true })
+    .map(String)
+    .filter((name) => name.endsWith('.ts') || name.endsWith('.tsx'))
+    .map((name) => {
+      const file = name.replace(/\\/g, '/')
+      return { name: file, text: read(`../../../src/${file}`) }
+    })
+
+const rendererCalls = (pattern: RegExp) =>
+  rendererFiles()
+    .filter((file) => file.name !== 'types/electron.d.ts')
+    .filter((file) => pattern.test(file.text))
+    .map((file) => file.name)
+
+describe('renderer cannot write the archive setting', () => {
+  it('reads archive_directory only through getSetting', () => {
+    const refs = rendererFiles().filter((file) => file.text.includes('archive_directory'))
+    expect(refs.map((file) => file.name).sort()).toEqual([
+      'features/import-scanner/components/ImportScannerPage.tsx',
+      'pages/Settings.tsx'
+    ])
+    for (const file of refs) {
+      const uses = file.text.match(/archive_directory/g) ?? []
+      const reads = file.text.match(/getSetting\('archive_directory'\)/g) ?? []
+      expect(reads).toHaveLength(uses.length)
+    }
+  })
+
+  it('calls no setSetting at all, though the bridge still offers it', () => {
+    expect(rendererCalls(/\bsetSetting\s*\(/)).toEqual([])
+    expect(bridgeTypes).toContain('setSetting(key: string, value: string, userId: number)')
+  })
+
+  it('changes the root only through archive:changeDirectory', () => {
+    expect(rendererCalls(/\bchangeArchiveDirectory\s*\(/)).toEqual(['pages/Settings.tsx'])
+  })
+})

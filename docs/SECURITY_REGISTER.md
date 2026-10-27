@@ -6,7 +6,8 @@ finding below was checked against the code on branch `security/s0-baseline`
 `04cba01` the original review used. Line numbers are for that commit.
 Rows marked Q5/Q6 and R18–R20 were added on `security/p1a-identity` (Phase 1A);
 R21–R23 and the Q1/Q2/Q4/Q7/Q13 statuses were updated on
-`security/p1b-electron-hardening` (Phase 1B). For those, treat a cited
+`security/p1b-electron-hardening` (Phase 1B); R6/Q3 and R17/Q11 were fixed on
+`security/p1c-files-and-paths` (Phase 1C). For those, treat a cited
 `file:line` as the S0 location and rely on the named symbols for the current one.
 
 Status values: `open` · `fixed` · `accepted` (risk accepted, documented) ·
@@ -93,8 +94,11 @@ application menu and no reload/DevTools shortcuts (Q2); the main window denies
 pop-ups, away-navigation and `<webview>` attachment and opens only camera
 streams, while media checks are granted so device names appear (Q7); the hidden
 print window has no preload (Q4). The Windows exe has
-`RunAsNode`, `NODE_OPTIONS` and `--inspect` fuses off (Q13). Hardening still
-relies on `contextIsolation: true`, `nodeIntegration: false` and the sandbox
+`RunAsNode`, `NODE_OPTIONS` and `--inspect` fuses off (Q13). `file:copy` now
+accepts only files the user picked in the Open dialog, as absolute paths (Q3),
+and every archive-root reader — imports, opens, folder naming, backups and
+restores — resolves through one default and one `getArchiveRoot()` (Q11).
+Hardening still relies on `contextIsolation: true`, `nodeIntegration: false` and the sandbox
 default; **there is still no CSP** (later work). Destructive actions (purge,
 delete, restore) rely on the UI for confirmation, except archive purge, which
 re-checks the password in main.
@@ -150,7 +154,7 @@ unchanged: they still need no login (R3, out of scope for Q1–Q13).
 | R3 | 18 data/file channels need no login | table in §5 | High | S1 | open — Q6 limits them to the app's own window page, but they still require no login |
 | R4 | Default accounts seeded at first run and printed on the login screen (and in the README) | `electron/db/connection.cjs:117-134`; `src/pages/Login.tsx:210-219`; `README.md:754-759` | High | S1 | open |
 | R5 | No login throttling or lockout; synchronous bcrypt compare | `electron/ipc/auth.ipc.cjs:16` | Medium | S1 | open |
-| R6 | `file:copy` validates only the destination; `sourcePath` may be any local file, then `file:readAsBase64` reads it back | `electron/ipc/files.ipc.cjs:13-33` (copy at :32) | High | S2 | open |
+| R6 | `file:copy` validates only the destination; `sourcePath` may be any local file, then `file:readAsBase64` reads it back | `electron/ipc/files.ipc.cjs:13-33` (copy at :32) | High | S2 | fixed (Q3, cp2/cp2b) — `file:copy` returns `{ success: false, error }` unless `sourcePath` is a member of the current session's picked-file set (`electron/security/pickedFiles.cjs`; the Open dialog records what it handed out). Sources must also be absolute, so `file.pdf`, `.\Docs\file.pdf` and `C:file.pdf` are refused rather than resolved against the working directory. Channel name, arguments and the destination checks are unchanged; `file:readPickedAsBase64` keeps its stricter exact-string check |
 | R7 | Path containment is string-only: no `realpath`, so junctions/symlinks escape; Windows case/trailing-dot/8.3/UNC forms are not normalised | `electron/services/archivePaths.cjs:8-26,36-45` | High | S2 | open |
 | R8 | No extension allowlist on open/import: `openExternal`, `print` and `exportCopy` will hand any stored file to the OS handler | `electron/ipc/files.ipc.cjs:52,193,286` | Medium | S3 | open |
 | R9 | No size or type limits on base64 IPC (`readAsBase64` reads whole files; `image:saveBase64` decodes any length) | `electron/ipc/files.ipc.cjs:91`; `electron/ipc/images.ipc.cjs:31` | Medium | S2 | open |
@@ -161,7 +165,7 @@ unchanged: they still need no login (R3, out of scope for Q1–Q13).
 | R14 | Backup restore extracts a ZIP to temp, then trusts the archive path stored inside the backup DB; `isSafeArchiveTarget` is an exact match against a forbidden list, so subfolders of Documents pass | `electron/ipc/backup.ipc.cjs:148,158,161`; `electron/services/backup.cjs:11-23` | Medium | S4 | verify |
 | R15 | Electron 28.3.3 (out of support) and 27 unresolved npm advisories | §7 below; `package.json` (`electron ^28.1.0`) | High | S5 | open |
 | R16 | Archive data is plaintext on disk and in backups | `electron/db/connection.cjs:41`; backup ZIP has no password | Medium | S6 | open |
-| R17 | Archive-root fallback differs: `getArchiveRoot()` → `Documents/ADZU_Archive`, DB init/`resolveArchiveDir` → `userData/Archive` | `electron/services/archivePaths.cjs:30`; `electron/db/connection.cjs:163`; `electron/services/backup.cjs:27` | Low | S2 | open |
+| R17 | Archive-root fallback differs: `getArchiveRoot()` → `Documents/ADZU_Archive`, DB init/`resolveArchiveDir` → `userData/Archive` | `electron/services/archivePaths.cjs:30`; `electron/db/connection.cjs:163`; `electron/services/backup.cjs:27` | Low | S2 | fixed (Q11, cp3) — one default (`DEFAULT_ARCHIVE_ROOT` in `electron/paths.cjs`) and one rule (`electron/security/archiveRoot.cjs`): the stored value wins when, trimmed, it has content; otherwise the default. `getArchiveRoot()` and `resolveArchiveDir()` both use it, whitespace can no longer resolve to the working directory, and `ensureArchiveSetting()` writes the default when the row is missing or blank (on database open and after both `backup:restore` migrations). `settings:set` refuses `archive_directory`, leaving `archive:changeDirectory` as the only writer. No file or folder was moved |
 | R18 | A renderer reload (Ctrl+R, crash recovery) drops `sessionStorage` but not the main-process session | `electron/security/session.cjs`; `auth:logout` and the window `closed` event are the only clears (`electron/ipc/auth.ipc.cjs`, `electron/main.cjs`) | Low | S1 | accepted — the UI shows the login screen while the window stays authorized for the previous user; reaching a guarded channel then needs renderer code execution |
 | R19 | `backup:restore` swaps the users table under a live session | `electron/ipc/backup.ipc.cjs:114`; the session keeps its `userId`, and `isAdmin` re-reads that id's row in the restored DB | Low | S1 | accepted — restore is admin-guarded and the renderer offers no forced re-login (`src/pages/Settings.tsx`); a restored DB that reuses the id decides the session's new authority |
 | R20 | Sender URL check is a second layer behind the main-frame identity check | `electron/security/senderGuard.cjs`; under BrowserRouter the measured packaged route URLs (`file:///D:/`, `file:///D:/students`) differed from `dist/index.html`, so the policy also allows one flat segment under a drive root | Low | S3 | resolved (P1B cp7) — the renderer now mounts `HashRouter`, so a packaged route keeps the `dist/index.html` document URL and changes only the fragment, which the policy ignores when matching the file. The policy still admits only the app's own `index.html`, and no rule was loosened. |
@@ -170,7 +174,26 @@ unchanged: they still need no login (R3, out of scope for Q1–Q13).
 | R23 | Electron fuses left at defaults: `ELECTRON_RUN_AS_NODE=1` turns the installed exe into a Node shell, and `NODE_OPTIONS` / `--inspect` can inject code into the main process | `package.json` (S0: no `afterPack`, no `electronFuses`) | High | S3 | fixed (Q13, cp6) — `scripts/afterPack.cjs` flips `RunAsNode`, `EnableNodeOptionsEnvironmentVariable` and `EnableNodeCliInspectArguments` off in the Windows exe; needs the installer smoke test (run `ELECTRON_RUN_AS_NODE=1` on the built exe) |
 
 R17 is an integrity issue rather than an attacker-controlled one; it is listed
-because a missing setting silently splits reads from backup paths.
+because a missing setting silently split reads from backup paths.
+
+**R17 affected installs and recovery.** The shared default is now
+`%APPDATA%\adzu-registrar-archive\Archive` (`userData\Archive`), the folder the
+database and `backup:create` already used; the old per-import fallback
+`Documents\ADZU_Archive` is gone. Installs with a saved `archive_directory` are
+not affected: the stored value still wins, it survives upgrades, and the
+Settings page shows it. The affected group is an install whose row is **missing
+or blank** *and* which has documents under `Documents\ADZU_Archive` — before
+this change those imports were written there while backups read
+`userData\Archive`, so its database may hold legacy absolute paths into the old
+folder. Nothing is moved, deleted or migrated; such rows now resolve as outside
+the root and are reported by `archive:checkIntegrity`/open instead of silently
+misdirecting new writes. Recovery is the existing, non-destructive Settings →
+Archive Location → **Point** at `Documents\ADZU_Archive` (files stay in place,
+the setting is re-pointed at them). A row that is missing because a restored
+backup left it blank is repaired automatically by `ensureArchiveSetting()` after
+the restore migrations, so the folder just written is the folder later read. No
+startup warning was added; `docs/security/p1c-analysis.md` §2.4 records how to
+identify an affected machine (Settings path plus an integrity check).
 
 Two notes on R20 (P1B cp7): the flat drive-root route allowance measured under
 BrowserRouter is now unused and could be removed as a future tightening; and a custom
@@ -294,6 +317,13 @@ GitHub.
   there is no menu bar, `NODE_ENV=development` does not load localhost:5173,
   camera scan and print still work, an outside link/`window.open` does nothing,
   and `ELECTRON_RUN_AS_NODE=1` does not produce a Node shell (R21–R23).
+- **P1C manual smoke test** — on the built installer: with the
+  `archive_directory` row deleted, import a document, open an existing one and
+  create a backup (the ZIP contains an `Archive` folder), then restore it;
+  `window.electronAPI.setSetting('archive_directory', 'C:\\temp', 1)` returns
+  the Archive Location refusal; `window.electronAPI.copyFile('C:\\Windows\\win.ini', …)`
+  returns `success: false` and copies nothing while a dialog-picked import still
+  works; Settings → Archive Location still moves and re-points (R6, R17).
 
 ## 12. Phase log
 
@@ -315,3 +345,7 @@ GitHub.
 | 2026-10-27 | P1B cp6 | Q13: `scripts/afterPack.cjs` flips `RunAsNode`, `EnableNodeOptionsEnvironmentVariable` and `EnableNodeCliInspectArguments` off in the Windows exe and is registered as `afterPack`; `@electron/fuses@1.8.0` added as the only new package (R23 fixed, pending the installer smoke test). No IPC, schema or CSP change in P1B. |
 | 2026-10-27 | P1B cp7 | Q6 follow-up: the packaged renderer loaded a blank content area because BrowserRouter pushes history-API paths onto a `file://` document. `src/App.tsx` now mounts `HashRouter` (route paths unchanged), so the document URL stays `dist/index.html` and only the fragment changes — which `will-navigate` does not see. Tests extended: hashed index URLs allowed by the policy, the sender guard and the navigation gate; every other file and host still denied behind a hash; wiring pinned that the gate is on `will-navigate` only. R20 resolved; no policy rule loosened. |
 | 2026-10-27 | P1B cp7b | Window icon and in-app logo: `build/icon.ico` (16–256 px) becomes the exe icon and `build/icon.png` is installed to `resources/icon.png` via `extraResources`, so the BrowserWindow icon resolves when packaged instead of falling back to the old cropped image. The seal on the sidebar and login screen is replaced by `src/assets/logo-256.png` at unchanged sizes; no IPC, schema or permission change. |
+| 2026-10-27 | P1C cp1 | `file:copy` and archive-root analysis (`docs/security/p1c-analysis.md`) on `security/p1c-files-and-paths`: every `file:copy` source is assigned from the Open dialog or the camera, so nothing legitimate relies on an arbitrary source; six archive-root computations spelled two defaults, plus five more places that guessed (including `validateAndResolvePath`'s plain `Documents` fallback). Analysis only. |
+| 2026-10-27 | P1C cp2 / cp2b | Q3: `file:copy` refuses any source that is not in the session's picked-file set (`electron/security/pickedFiles.cjs`, 24 tests). cp2b rejects non-absolute sources, so `C:file.pdf` and `.\Docs\file.pdf` cannot be resolved against the process working directory. Signature and destination checks unchanged (R6 fixed). |
+| 2026-10-27 | P1C cp3 | Q11: one default (`DEFAULT_ARCHIVE_ROOT`) and one resolver (`archiveRoot.cjs`); `getArchiveRoot()`/`ensureArchiveSetting()` in `archivePaths.cjs` replace every private copy, `ensureArchiveSetting()` runs on database open and after both restore migrations, `settings:set` refuses `archive_directory` (R17 fixed). No file or folder moved; the affected-install scenario and its Point recovery are recorded under R17. |
+| 2026-10-27 | P1C cp4 | Cross-check test (`tests/electron/security/oneArchiveRoot.test.ts`, 6 tests) runs the real archive modules against a temp `userData` and an in-memory settings handle: with no row, blank row, padded row and a restored database, saving, opening, copying, backup and restore all resolve the same folder, and none falls back to the working directory or `Documents`. Renderer pins (`archiveRootWiring.test.ts`, +3) fail if any `src/` file calls `setSetting`, reads `archive_directory` other than through `getSetting`, or changes the root outside `Settings.tsx`'s `archive:changeDirectory`. No renderer caller needed fixing: the bridge still exposes `setSetting`, and nothing uses it. |
