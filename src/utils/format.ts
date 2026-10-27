@@ -1,5 +1,14 @@
-export function formatDate(dateString: string) {
+const UNKNOWN_DATE = 'Unknown date'
+
+/** Placeholder instead of a throw: one bad created_at must not blank a whole list. */
+export function formatDate(dateString: string | null | undefined) {
+  if (typeof dateString !== 'string' || dateString.trim() === '') {
+    return UNKNOWN_DATE
+  }
   const date = new Date(dateString)
+  if (Number.isNaN(date.getTime())) {
+    return UNKNOWN_DATE
+  }
   return new Intl.DateTimeFormat('en-US', {
     month: 'short',
     day: 'numeric',

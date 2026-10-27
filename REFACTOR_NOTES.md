@@ -1640,3 +1640,18 @@ Follow-ups deliberately deferred until the defense pass is finished.
   in `Settings.tsx`. `docs/SECURITY_REGISTER.md` updated: R6 fixed (Q3), R17 fixed (Q11) with the
   affected-install group and the Settings → Point recovery, §4 mitigation summary, §11 P1C
   smoke test, §12 phase log for cp1–cp4.
+- **P1D cp1 (2026-10-27)** — P1 Q12: `formatDate` in `src/utils/format.ts` now returns the
+  placeholder `Unknown date` for `null`, `undefined`, empty, whitespace-only and unparseable
+  input instead of letting `Intl.DateTimeFormat` throw a `RangeError` on an Invalid Date, and its
+  parameter widened to `string | null | undefined` (widening only, so no caller changed). Why:
+  `Dashboard`, `Search` and `Students` render `doc.created_at`/`student.created_at` per row, so
+  one bad stored value used to blank the whole list. No near copies exist in `src/` (this file is
+  the only date formatting in the renderer). `tests/utils/format.test.ts`: **the existing "throws
+  on an unparseable value" test pinned the old behaviour and was replaced in this commit** by a
+  placeholder assertion, plus new cases for `null`, `undefined`, `''`, `'   '`, `'2026-13-45'`
+  and a date-only string. `formatTimestamp` (same file) is **not** changed — it is a separate
+  helper outside Q12 and still throws on an invalid value; recorded as a follow-up candidate.
+  Manual check: in a test database set one document's `created_at` to `garbage`
+  (`UPDATE documents SET created_at='garbage' WHERE id=…`), then open Students, Search and
+  Dashboard — the row shows `Unknown date` and the list still renders.
+
