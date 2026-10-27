@@ -1685,4 +1685,20 @@ Follow-ups deliberately deferred until the defense pass is finished.
   a separate `p1d cp2b` commit.
   Manual check: open `docs/security/p1d-doc-corrections.md` and spot-check §2 against
   `electron/preload.js` (47 keys) and `package.json` (build block).
+- **P1D cp2b (2026-10-27)** — P1 Q10: applied the approved wording (README RM1–RM10, RM13–RM21;
+  HANDOFF HH1–HH6) in `README.md` and `HANDOFF.md` only. Every replaced claim now states what the
+  code does: **47** channels / methods / handlers (was "39"), 28 test files / 304 tests (was 9 /
+  109), `HashRouter` instead of `BrowserRouter`, the real `isAdmin` (session + `role, status`),
+  `build/icon.ico` + `extraResources` + `afterPack` in the packaging section, `electron/security/`,
+  `scripts/afterPack.cjs`, `build/` and the legacy `database/` folder in the structure tree, the
+  renderer's five `logs:add` call sites, the two-part session, and **no WAL** (SQLite's default
+  `delete` journal; no `journal_mode` pragma exists). Residual weaknesses kept visible: no
+  password-change feature, `logs:add` still renderer-callable (R10), plaintext database, and a
+  new Known-Limitations row for out-of-support Electron 28.3.3 (R15). RM11/RM12 (the default
+  credentials table and the password-change note at README:761) were **not** touched — Q8.
+  `REFACTOR_SMOKE_TEST.md` SM1 was approved by name but left unchanged because the instruction
+  limited edits to `README.md`, `HANDOFF.md` and `docs/`; flagged for the owner.
+  No code, IPC, schema or test changed. Manual check: `git diff --stat` shows only the two
+  markdown files plus this line; README §7 lists 47 methods and §8 shows the session-aware
+  `isAdmin`; the §17 answers no longer mention WAL.
 
