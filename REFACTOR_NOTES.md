@@ -1565,5 +1565,48 @@ Follow-ups deliberately deferred until the defense pass is finished.
   Why: register R6 — `file:copy` validated only the destination, so the renderer could copy the
   database or any readable file into the archive and read it back with `file:readAsBase64`.
   Manual check: import through the dialog works; in DevTools
-  `window.electronAPI.copyFile('C:\Windows\win.ini', <path inside the archive>)` returns
+  `window.electronAPI.copyFile('C:\\Windows\\win.ini', <path inside the archive>)` returns
   `success: false` and copies nothing, while the dialog-picked file still imports.
+- **P1C cp3 (2026-10-27)** — Q11: one archive root. `electron/paths.cjs` now exports
+  `DEFAULT_ARCHIVE_ROOT = path.join(userDataPath, 'Archive')`, and the new pure
+  `electron/security/archiveRoot.cjs` (`resolveArchiveRoot(settingValue, defaultRoot)`) decides
+  between a **trimmed** stored value and that default — so a whitespace-only setting can never
+  become a path (it used to resolve to the process working directory). `services/archivePaths.cjs`
+  gained `getArchiveRoot(handle)` (optional handle, so existing no-argument calls are unchanged)
+  and `ensureArchiveSetting(handle)`, which writes the default when the row is missing or blank
+  and creates the folder; a configured custom root is never rewritten and never created there.
+  Every archive-root consumer now goes through them: `file:copy`, `image:saveBase64`,
+  `migrateDocumentTypeFolders`, `resolveArchivePath`, `toArchiveRelative`, `validateAndResolvePath`
+  (its fallback was plain `Documents` and is now `getArchiveRoot()`; the module no longer needs
+  `electron`), `computeDocumentTypeFolder` (`resolveArchiveRoot(archiveRoot, null) ||
+  getArchiveRoot()`, so a blank renderer value cannot win), `backup:create` via
+  `resolveArchiveDir(handle)` (same trimmed rule, same default), and the backup probe path that
+  reads a **backup's own** database. `initializeDatabase` calls `ensureArchiveSetting(db)` in
+  place of its private default block — required lazily inside the function, because
+  `archivePaths` requires `db/connection` for `getDb()` and a load-time require would close that
+  cycle. `backup:restore` calls `ensureArchiveSetting()` after `runMigrations()` on both the
+  success path and the recovery path, so the folder it just replaced is the folder the restored
+  database reads from. `settings:set` now refuses `archive_directory` (after the admin check,
+  before the write) and points at Settings → Archive Location. Renderer fallback fixed
+  (recorded as **place 9** in `docs/security/p1c-analysis.md` §2.2, called "place 7" in the
+  phase instruction): `ImportScannerPage` passes `archiveResult.value` unchanged instead of the
+  relative `'Archive'`, and `src/types/electron.d.ts` widens `archiveRoot` to `string | null`;
+  no IPC channel or preload signature changed. `archive:changeDirectory` is untouched (same
+  move/point logic, same audit entry), and no file or folder was moved or deleted.
+  Why: register R17 / Q11 — four copies said `Documents\ADZU_Archive` and two said
+  `userData\Archive`, so with the setting missing or blank an import was written to one folder
+  while `backup:create` read the other and silently produced a database-only ZIP.
+  8 pure tests in `tests/electron/security/archiveRoot.test.ts` (configured value, trimming,
+  missing/empty/whitespace/non-string fallbacks, no working-directory result, verbatim default,
+  drive root and trailing separator preserved) and 20 source-level pins in
+  `tests/electron/security/archiveRootWiring.test.ts` (the default is defined once and exported;
+  no `ADZU_Archive` or duplicated userData default anywhere; `getArchiveRoot`/`ensureArchiveSetting`
+  shape and export; the insert sits inside the blank-row guard; each of the six consumers calls
+  the shared functions and no longer reads the row; `connection.cjs` requires `archivePaths`
+  lazily; both `runMigrations()` calls in `backup:restore` are followed by
+  `ensureArchiveSetting()`; `settings:set` refuses the key after the admin check and before the
+  write; the renderer passes the value through and the bridge type accepts null).
+  Manual check: with the setting deleted from a test database, import a document, open an old
+  document, run `backup:create` — all use `%APPDATA%\adzu-registrar-archive\Archive` and the ZIP
+  contains an `Archive` folder; `window.electronAPI.setSetting('archive_directory',
+  'C:\\temp', 1)` returns `success: false` with the Archive Location message.

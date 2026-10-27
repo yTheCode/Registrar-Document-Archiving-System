@@ -20,6 +20,16 @@ ipcMain.handle('settings:set', async (event, { key, value, userId }) => {
       return { success: false, error: 'Permission denied. Admin access required.' };
     }
 
+    // Q11: the archive root has one writer, archive:changeDirectory, which
+    // validates the target and moves or re-points the files. A raw setting
+    // write here would leave the files and the database disagreeing.
+    if (key === 'archive_directory') {
+      return {
+        success: false,
+        error: 'The archive folder cannot be changed here. Use Settings → Archive Location, which moves or re-points the archived files.'
+      };
+    }
+
     getDb().prepare(`
       INSERT INTO settings (key, value, updated_at) 
       VALUES (?, ?, (strftime('%Y-%m-%dT%H:%M:%fZ','now')))

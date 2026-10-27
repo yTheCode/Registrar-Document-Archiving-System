@@ -5,7 +5,7 @@ const fs = require('fs');
 const { dbDir, dbPath, ELECTRON_DIR } = require('../paths.cjs');
 const { getDb } = require('../db/connection.cjs');
 const { isAdmin } = require('../services/authz.cjs');
-const { validateAndResolvePath, resolveArchivePath } = require('../services/archivePaths.cjs');
+const { validateAndResolvePath, resolveArchivePath, getArchiveRoot } = require('../services/archivePaths.cjs');
 const { sessionPickedFiles } = require('../services/pickedFiles.cjs');
 const { isPickedPath } = require('../security/pickedFiles.cjs');
 const { resolveRuntimeMode } = require('../security/runtimeMode.cjs');
@@ -24,9 +24,8 @@ ipcMain.handle('file:copy', async (event, { sourcePath, destPath }) => {
       return { success: false, error: 'Only files chosen in the Open dialog can be imported.' };
     }
 
-    // Get archive root from settings
-    const archiveSetting = getDb().prepare('SELECT value FROM settings WHERE key = ?').get('archive_directory');
-    const archiveRoot = archiveSetting?.value || path.join(app.getPath('documents'), 'ADZU_Archive');
+    // Q11: the one archive root (setting, trimmed, or the shared default)
+    const archiveRoot = getArchiveRoot();
     
     // Validate destination path to prevent traversal attacks
     const validation = validateAndResolvePath(destPath, archiveRoot);

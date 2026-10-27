@@ -159,11 +159,13 @@ export interface ElectronAPI {
   createDocumentsBatch(documents: BatchInsertDocument[], userId: number): Promise<BatchInsertResult>
 
   // Folder path generation
+  // archiveRoot is the configured archive folder, or null when the setting is
+  // missing — the main process then uses its single archive root.
   generateFolderPath(
     studentId: number | null,
     documentTypeId: number,
     documentTypeName: string,
-    archiveRoot: string,
+    archiveRoot: string | null,
     ext: string
   ): Promise<FolderPathResult>
 

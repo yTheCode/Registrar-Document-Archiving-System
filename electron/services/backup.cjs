@@ -3,7 +3,8 @@ const path = require('path');
 const fs = require('fs');
 const { app } = require('electron');
 const Database = require('better-sqlite3');
-const { dbDir, PROJECT_ROOT, userDataPath } = require('../paths.cjs');
+const { dbDir, PROJECT_ROOT, DEFAULT_ARCHIVE_ROOT } = require('../paths.cjs');
+const { resolveArchiveRoot } = require('../security/archiveRoot.cjs');
 
 // Restoring reads the archive location out of a database that may have come
 // from another machine, then deletes that folder recursively — so never let it
@@ -22,9 +23,11 @@ function isSafeArchiveTarget(dir) {
   return !forbidden.some((p) => path.resolve(p) === resolved);
 }
 
+// Same rule as the live database, applied to whichever handle is passed in:
+// the live one for backup:create, the backup's own database for restore.
 function resolveArchiveDir(handle) {
   const row = handle.prepare('SELECT value FROM settings WHERE key = ?').get('archive_directory');
-  return row?.value || path.join(userDataPath, 'Archive');
+  return resolveArchiveRoot(row?.value, DEFAULT_ARCHIVE_ROOT);
 }
 
 // Prove the database inside a backup is a usable SQLite file with the tables

@@ -21,6 +21,10 @@ if (!fs.existsSync(dbPath) && fs.existsSync(legacyDbPath)) {
   console.log('Migrated database from the legacy project folder to userData');
 }
 
+// The archive lives beside the database in userData. This is the one default:
+// every archive-root consumer resolves through services/archivePaths.cjs.
+const DEFAULT_ARCHIVE_ROOT = path.join(userDataPath, 'Archive');
+
 const ELECTRON_DIR = __dirname;
 const PROJECT_ROOT = path.join(__dirname, '..');
 const PRELOAD_PATH = path.join(__dirname, 'preload.js');
@@ -30,6 +34,7 @@ module.exports = {
   dbDir,
   dbPath,
   legacyDbPath,
+  DEFAULT_ARCHIVE_ROOT,
   ELECTRON_DIR,
   PROJECT_ROOT,
   PRELOAD_PATH
