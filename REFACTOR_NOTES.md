@@ -1710,8 +1710,35 @@ Follow-ups deliberately deferred until the defense pass is finished.
   default credentials as Q8 manual work, no throttling, string-only path containment, no
   extension allowlist, no size limits, forgeable `logs:add`, backup-restore trust, no CSP,
   Electron 28, plaintext data at rest, reload/restore residual risks). §5 records that README §3
-  still prints the declared version ranges rather than the installed versions — not in the
-  approved edit list, so left unchanged and listed here instead. §6 lists the commands used, so
-  every number can be re-derived. No code or README change.
+  still printed the declared version ranges at that point — it was not in the approved edit list
+  then; the owner approved the change separately, and it landed in `p1d cp3c` (see below). §6
+  lists the commands used, so every number can be re-derived. No code or README change.
   Manual check: pick any number in §1 and re-run the matching command from §6.
+- **P1D cp3b (2026-10-27)** — P1 Q10, smoke test: added the reload caveat to
+  `REFACTOR_SMOKE_TEST.md` §1, one line only. The owner widened the doc-only scope for this file
+  by name. It now reads that a reload drops the renderer's `sessionStorage` but not the
+  main-process session (register R18), so the login screen reappearing is UI behaviour, not a
+  cleared session. No code changed. *(This line was missed in the cp3b commit itself; it is added
+  here rather than by amending that commit.)*
+  Manual check: reload `npm run dev` while logged in — login screen, same as before.
+- **P1D cp3c (2026-10-27)** — P1 Q10, README §3: the stack table now shows the **installed**
+  versions read from `package-lock.json` (Electron 28.3.3, React 18.3.1, TypeScript 5.9.3, Vite
+  5.4.21, Tailwind 4.3.3, React Router 6.30.6, better-sqlite3 9.6.0, bcryptjs 2.4.3, archiver
+  7.0.1, adm-zip 0.6.1, lucide-react 1.46.0, jscanify 1.4.3, the two `@fontsource` packages)
+  instead of the `package.json` ranges, and the heading says where they come from. Layout
+  unchanged. No code changed. *(This line was missed in the cp3c commit itself; it is added here
+  rather than by amending that commit.)*
+  Manual check: compare three rows with `node -p "require('./node_modules/electron/package.json').version"`.
+- **P1D cp4 (2026-10-27)** — P1 Q10, verification record: added
+  `docs/security/PHASE1_VERIFICATION.md` — exactly 13 rows Q1–Q13, each with the status, the real
+  commit message from `git log`, the test file from `tests/` and a manual check; Q8 and Q9 are
+  `manual: not implemented here` with a two-line procedure each (Q8: new admin with a strong
+  password, log in with it, deactivate the default accounts — after the team confirms the UI can
+  do it, since no password-change feature exists). The real results are recorded: typecheck PASS,
+  build PASS, 28 files / 304 tests, lint 0 errors / 112 warnings, packaging not run by
+  instruction. `docs/SECURITY_REGISTER.md` gained R24 (documentation described a different build)
+  and R25 (date helpers threw on a bad value), both `fixed`, plus the P1D phase-log rows and a
+  P1D manual smoke test in §11. No application code, IPC or schema changed.
+  Manual check: `git log --oneline --grep="^p1"` messages match the table verbatim; run the three
+  counts in the Q10 row.
 
