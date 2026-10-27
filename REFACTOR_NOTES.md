@@ -1701,4 +1701,17 @@ Follow-ups deliberately deferred until the defense pass is finished.
   No code, IPC, schema or test changed. Manual check: `git diff --stat` shows only the two
   markdown files plus this line; README §7 lists 47 methods and §8 shows the session-aware
   `isAdmin`; the §17 answers no longer mention WAL.
+- **P1D cp3 (2026-10-27)** — P1 Q10, SRS/slides support: added
+  `docs/security/p1d-srs-slides-notes.md` with the measured facts (47 channels, 47 methods,
+  27 admin-guarded, 2 session-only, 18 unguarded, 28 files / 304 tests, Electron 28.3.3,
+  better-sqlite3 9.6.0, React 18.3.1, TypeScript 5.9.3, HashRouter, default SQLite journal,
+  bcrypt cost 10, `userData\Archive`), nine ready-to-paste corrected statements, a Q-by-Q table
+  of what Phase 1 now protects against, and an explicit limitation list (unguarded channels,
+  default credentials as Q8 manual work, no throttling, string-only path containment, no
+  extension allowlist, no size limits, forgeable `logs:add`, backup-restore trust, no CSP,
+  Electron 28, plaintext data at rest, reload/restore residual risks). §5 records that README §3
+  still prints the declared version ranges rather than the installed versions — not in the
+  approved edit list, so left unchanged and listed here instead. §6 lists the commands used, so
+  every number can be re-derived. No code or README change.
+  Manual check: pick any number in §1 and re-run the matching command from §6.
 
