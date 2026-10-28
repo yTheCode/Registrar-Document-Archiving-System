@@ -206,17 +206,6 @@ function Login({ onLogin }: LoginProps) {
                 {isLoading ? 'Logging in...' : 'Log in'}
               </button>
             </form>
-
-            {/* Helper text */}
-            <div className="mt-4 text-center text-[10px] text-[#8290a1]">
-              <p>Default credentials for testing:</p>
-              <p className="mt-1 font-semibold text-[#34445a]">
-                Administrator: admin / admin123
-              </p>
-              <p className="font-semibold text-[#34445a]">
-                Regular Staff: user / user123
-              </p>
-            </div>
           </div>
 
 
